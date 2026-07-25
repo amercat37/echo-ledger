@@ -1,0 +1,24 @@
+.env
+.venv/
+output/
+input/
+done/
+failed/
+state/
+speakers.json
+
+# Benchmark artifacts = transcripts of a real call. Keep out of history.
+bench/
+__pycache__/
+*.pyc
+.DS_Store
+scratch_*
+
+# Audio must NEVER be committed (raw voice = biometric). Hard rule.
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.ogg
+*.mp4
+*.aac

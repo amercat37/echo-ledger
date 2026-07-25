@@ -1,0 +1,42 @@
+services:
+  # Batch / run-on-demand CLI: `docker compose run --rm echo-ledger`
+  # (also handles `enroll` / `relabel` subcommands).
+  echo-ledger:
+    build: .
+    image: echo-ledger:latest
+    env_file: .env
+    volumes:
+      # Bind mounts — drop audio in ./input, collect results from ./output etc.
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./done:/data/done
+      - ./failed:/data/failed
+      # Speaker profile library (biometric — host-persisted, gitignored).
+      - ./state:/data/state
+      # Persist downloaded models (~2 GB) across run-on-demand containers.
+      - hf-cache:/root/.cache/huggingface
+      # Persist whisperx's English alignment model (~360 MB, under torch cache).
+      - torch-cache:/root/.cache/torch
+
+  # Web UI: `docker compose up web` → http://127.0.0.1:5000
+  # Same image as the batch tool; just a different entrypoint. Localhost-only is
+  # enforced by publishing to 127.0.0.1 (Flask listens on 0.0.0.0 in-container).
+  web:
+    build: .
+    image: echo-ledger:latest
+    env_file: .env
+    entrypoint: ["python", "src/web.py"]
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./done:/data/done
+      - ./failed:/data/failed
+      - ./state:/data/state
+      - hf-cache:/root/.cache/huggingface
+      - torch-cache:/root/.cache/torch
+
+volumes:
+  hf-cache:
+  torch-cache:

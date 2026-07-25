@@ -1,0 +1,27 @@
+# Keep the build context tiny — only src/ + requirements.txt are needed.
+.venv/
+.git/
+.gitignore
+.env
+env.sample
+input/
+output/
+done/
+failed/
+state/
+speakers.json
+bench/
+*.mp3
+*.m4a
+*.wav
+*.flac
+**/__pycache__/
+*.pyc
+.claude/
+*.md
+run-test.sh
+activate.sh
+bench_models.py
+docker-compose.yml
+Dockerfile
+.dockerignore

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Tag speakers — Echo Ledger{% endblock %}
+{% block body %}
+
+<p class="muted" style="margin-top:0;">
+  Name an unknown voice once — Echo Ledger remembers it and auto-names that
+  person in every past and future transcript. Leave a box blank to skip it.
+</p>
+
+<div id="list"><div class="card"><div class="empty">Loading…</div></div></div>
+<div id="notice" class="muted" style="margin-top:12px; min-height:20px;"></div>
+
+<script>
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const notice = document.querySelector('#notice');
+
+function card(t) {
+  const rows = t.speakers.map(sp => `
+    <div class="row">
+      <div style="min-width:0; flex:1;">
+        <div class="name">${esc(sp.label)}</div>
+        <div class="muted" style="font-size:13px; white-space:normal;">“${esc(sp.snippet)}”</div>
+      </div>
+      <input class="nameInput" data-label="${esc(sp.label)}" placeholder="name…"
+        style="padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+               background:var(--bg); color:var(--ink); font-size:14px; width:150px;">
+    </div>`).join('');
+  return `<div class="card" data-stem="${esc(t.stem)}" style="margin-bottom:18px;">
+      <div class="row" style="background:var(--chip);">
+        <div class="name">${esc(t.stem)}</div>
+        <span class="spacer" style="margin-left:auto;"></span>
+        <span class="chip warn">${t.speakers.length} unknown</span>
+        <a class="btn sm ghost" href="/view/${encodeURIComponent(t.stem)}">View</a>
+      </div>
+      ${rows}
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn primary sm save">Save &amp; re-label all</button>
+      </div>
+    </div>`;
+}
+
+async function load() {
+  const data = await (await fetch('/api/tags')).json();
+  const list = document.querySelector('#list');
+  if (!data.transcripts.length) {
+    list.innerHTML = '<div class="card"><div class="empty">🎉 No unknown speakers — every transcript is fully named.</div></div>';
+    return;
+  }
+  list.innerHTML = data.transcripts.map(card).join('');
+  list.querySelectorAll('.save').forEach(btn =>
+    btn.addEventListener('click', () => save(btn.closest('[data-stem]'))));
+}
+
+async function save(cardEl) {
+  const stem = cardEl.dataset.stem;
+  const names = {};
+  cardEl.querySelectorAll('.nameInput').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) names[inp.dataset.label] = v;
+  });
+  if (!Object.keys(names).length) { notice.textContent = 'Enter at least one name first.'; return; }
+  notice.textContent = 'Enrolling and re-labeling…';
+  const r = await fetch('/api/enroll', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ stem, names })
+  });
+  const j = await r.json();
+  if (j.ok) notice.textContent =
+    `Enrolled ${j.added.join(', ')}. Re-scanned ${j.scanned} transcript(s), ${j.named} now named.`;
+  else notice.textContent = 'Nothing enrolled.';
+  load();
+}
+
+load();
+</script>
+{% endblock %}

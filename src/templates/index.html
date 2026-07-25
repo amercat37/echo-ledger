@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Echo Ledger — Transcribe{% endblock %}
+{% block body %}
+
+<div id="drop" class="card" style="padding:34px 20px; text-align:center; border-style:dashed; cursor:pointer;">
+  <div style="font-size:26px; margin-bottom:6px;">🎧</div>
+  <div style="font-weight:700; font-size:16px;">Drop audio here, or click to choose</div>
+  <div class="muted" style="margin-top:4px;">mp3, m4a, wav, flac, ogg, mp4, aac · they start transcribing automatically</div>
+  <input id="file" type="file" multiple accept=".mp3,.m4a,.wav,.flac,.ogg,.mp4,.aac" style="display:none;">
+</div>
+<div id="notice" class="muted" style="margin:10px 2px 0; min-height:18px;"></div>
+
+<h2 style="display:flex; align-items:center;">
+  Queue
+  <span class="spacer" style="margin-left:auto;"></span>
+  <button id="pause" class="btn sm ghost" style="text-transform:none; letter-spacing:0;">Pause</button>
+</h2>
+<div id="queue" class="card"><div class="empty">Nothing in the queue.</div></div>
+
+<h2>Completed transcripts</h2>
+<div id="done" class="card"><div class="empty">No transcripts yet.</div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const drop = $('#drop'), fileInput = $('#file'), notice = $('#notice');
+
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { send(fileInput.files); fileInput.value = ''; });
+['dragover','dragenter'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.style.borderColor = 'var(--accent)';
+}));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.style.borderColor = '';
+}));
+drop.addEventListener('drop', ev => send(ev.dataTransfer.files));
+
+async function send(files) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  notice.textContent = 'Uploading…';
+  try {
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    let msg = j.accepted.length ? `Queued ${j.accepted.length} file(s).` : '';
+    if (j.rejected.length) msg += ` Skipped (not audio): ${j.rejected.join(', ')}`;
+    notice.textContent = msg;
+  } catch { notice.textContent = 'Upload failed.'; }
+  refresh();
+}
+
+async function act(url) { await fetch(url, { method: 'POST' }); refresh(); }
+async function togglePause() {
+  const paused = $('#pause').dataset.paused === '1';
+  await fetch('/api/pause', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ paused: !paused })
+  });
+  refresh();
+}
+$('#pause').addEventListener('click', togglePause);
+
+const STATUS = {
+  queued:       ['chip',      'Queued'],
+  transcribing: ['chip run',  'Transcribing…'],
+  failed:       ['chip err',  'Failed'],
+  canceled:     ['chip',      'Canceled'],
+};
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function renderQueue(q) {
+  if (!q.length) return '<div class="empty">Nothing in the queue.</div>';
+  return q.map(j => {
+    const [cls, label] = STATUS[j.status] || ['chip', j.status];
+    let action = '';
+    if (j.status === 'queued')
+      action = `<button class="btn sm ghost" onclick="act('/api/cancel/${j.id}')">Cancel</button>`;
+    else if (j.status === 'failed' || j.status === 'canceled')
+      action = `<button class="btn sm ghost" onclick="act('/api/dismiss/${j.id}')">Dismiss</button>`;
+    const err = j.error ? `<div class="muted" style="font-size:12px;">${esc(j.error)}</div>` : '';
+    return `<div class="row"><div style="min-width:0;">
+        <div class="name">${esc(j.filename)}</div>${err}
+      </div><span class="spacer"></span>
+      <span class="${cls}">${label}</span>${action}</div>`;
+  }).join('');
+}
+
+function renderDone(items) {
+  if (!items.length) return '<div class="empty">No transcripts yet.</div>';
+  return items.map(it => {
+    const tag = it.unnamed
+      ? `<a class="chip warn" href="/tag" title="unknown speakers">${it.unnamed} to tag</a>`
+      : `<span class="chip ok">named</span>`;
+    return `<div class="row"><div class="name" style="min-width:0;">${esc(it.stem)}</div>
+      <span class="spacer"></span>${tag}
+      <a class="btn sm" href="/view/${encodeURIComponent(it.stem)}">View</a>
+      <a class="btn sm" href="/download/${encodeURIComponent(it.stem)}">Download</a></div>`;
+  }).join('');
+}
+
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    $('#queue').innerHTML = renderQueue(s.queue);
+    $('#done').innerHTML = renderDone(s.completed);
+    const btn = $('#pause');
+    btn.dataset.paused = s.paused ? '1' : '0';
+    btn.textContent = s.paused ? '▶ Resume' : 'Pause';
+    btn.classList.toggle('primary', s.paused);
+  } catch {}
+}
+
+refresh();
+setInterval(refresh, 1500);
+</script>
+{% endblock %}

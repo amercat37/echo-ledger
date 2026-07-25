@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ stem }} — Echo Ledger{% endblock %}
+{% block body %}
+
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+  <a class="link" href="{{ url_for('index') }}">← Back</a>
+  <span class="spacer" style="margin-left:auto;"></span>
+  <a class="btn sm" href="{{ url_for('download', stem=stem) }}">Download .md</a>
+</div>
+<h1 style="font-size:22px; margin:6px 0 18px;">{{ stem }}</h1>
+
+<div class="card" style="padding:6px 4px;">
+  {% for t in turns %}
+  <div style="padding:12px 18px; border-bottom:1px solid var(--line);">
+    <div style="font-weight:700;">{{ t.name }}
+      <span class="muted" style="font-weight:500; font-size:13px;">· {{ t.ts }}</span>
+    </div>
+    <div style="margin-top:3px;">{{ t.text }}</div>
+  </div>
+  {% else %}
+  <div class="empty">This transcript is empty.</div>
+  {% endfor %}
+</div>
+
+<p class="muted" style="margin-top:16px; font-size:13px;">
+  Speaker showing as “Speaker N”? Name them on the
+  <a class="link" href="{{ url_for('tag') }}">Tag speakers</a> page.
+</p>
+{% endblock %}

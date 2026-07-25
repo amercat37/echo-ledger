@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Echo Ledger{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --ink: #1c2330; --muted: #6b7688;
+      --line: #e4e8ee; --accent: #3b6cf0; --accent-ink: #fff;
+      --ok: #1f9d63; --warn: #c67a12; --err: #d0402c; --chip: #eef1f6;
+      --shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 16px rgba(20,30,50,.05);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12151b; --card: #1a1f28; --ink: #e8ecf3; --muted: #98a2b3;
+        --line: #2a313d; --accent: #5b86f2; --accent-ink: #fff;
+        --ok: #34c07b; --warn: #e0a13c; --err: #f0674f; --chip: #232a35;
+        --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 22px; background: var(--card);
+      border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;
+    }
+    header .brand { font-weight: 700; font-size: 17px; letter-spacing: -.2px; }
+    header .brand small { color: var(--muted); font-weight: 500; margin-left: 8px; }
+    header nav { margin-left: auto; display: flex; gap: 6px; }
+    header nav a {
+      text-decoration: none; color: var(--muted); padding: 7px 13px;
+      border-radius: 8px; font-weight: 600; font-size: 14px;
+    }
+    header nav a:hover { background: var(--chip); color: var(--ink); }
+    header nav a.active { background: var(--accent); color: var(--accent-ink); }
+    main { max-width: 860px; margin: 0 auto; padding: 22px; }
+    h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .5px;
+         color: var(--muted); margin: 26px 0 12px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; box-shadow: var(--shadow);
+    }
+    .btn {
+      border: 1px solid var(--line); background: var(--card); color: var(--ink);
+      padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .btn.ghost { background: transparent; }
+    .btn.sm { padding: 5px 10px; font-size: 13px; }
+    .chip {
+      display: inline-block; padding: 2px 9px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; background: var(--chip); color: var(--muted);
+    }
+    .chip.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+    .chip.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+    .chip.err { background: color-mix(in srgb, var(--err) 16%, transparent); color: var(--err); }
+    .chip.run { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+    .muted { color: var(--muted); }
+    .row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    .row:last-child { border-bottom: 0; }
+    .row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .spacer { margin-left: auto; }
+    .empty { padding: 22px 16px; color: var(--muted); text-align: center; }
+    a.link { color: var(--accent); text-decoration: none; font-weight: 600; }
+    a.link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Echo&nbsp;Ledger <small>audio → transcript</small></span>
+    <nav>
+      <a href="{{ url_for('index') }}" class="{{ 'active' if active=='home' }}">Transcribe</a>
+      <a href="{{ url_for('tag') }}" class="{{ 'active' if active=='tag' }}">Tag speakers</a>
+    </nav>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>
