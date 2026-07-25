@@ -14,6 +14,7 @@ memory vault.
 | **1** | Dockerized batch ingest: drop audio → transcribe → markdown + JSON → done/failed | ✅ **done & verified** |
 | **2** | Speaker identification: enroll once, auto-name after | ✅ **done & verified (local + container)** |
 | **3** | Web UI: upload → serial queue → view/download + speaker tagging | ✅ **done & verified (local + container)** |
+| **3.1** | Manage speakers: re-tag/override, rename, delete + ▶ play a voice | ✅ **done & verified (local + container)** |
 
 Deferred: 30-day retention sweep for aged audio/JSON; the "ignore/system" bucket
 for recurring automated attendants. **Retired:** auto-push transcripts into the
@@ -44,9 +45,15 @@ docker compose run --rm echo-ledger enroll <stem>   # interactive naming (TTY)
 docker compose run --rm echo-ledger relabel         # re-apply profiles to all
 ```
 
-Web UI: **Transcribe** page = drag-drop → auto-enqueue → visible queue (per-item
-cancel + global pause) → completed list with View + Download. **Tag speakers**
-page = name unknown voices → enroll voiceprint → auto re-label every transcript.
+Web UI (3 pages): **Transcribe** = drag-drop → auto-enqueue → visible queue (per-item
+cancel + global pause) → completed list with View + Download. **Tag speakers** = name
+unknown voices (dropdown of existing people + Add-new, ▶ play to hear them) → enroll →
+auto re-label every transcript. **People** = rename / delete enrolled speakers in-UI.
+**View** page also has a per-transcript re-tag panel (override any speaker: name / make
+generic / auto) + ▶ play per speaker and per turn. `/audio/<stem>` streams the source
+audio from `done/` (persisted `source_audio` in each JSON); ▶ hides if the audio is gone.
+Per-transcript overrides live in `data["label_overrides"]` ({label: name}; "" = force
+Speaker N). `speakers.json` writes are atomic (temp + rename).
 
 ## Key files
 
