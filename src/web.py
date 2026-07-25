@@ -289,9 +289,8 @@ def api_tags():
         unknown = engine.list_unidentified(data, CONFIG, profiles)
         if not unknown:
             continue
-        segments = data.get("segments", [])
-        for sp in unknown:
-            sp["segment"] = engine.best_segment_for(segments, sp["label"])
+        # list_unidentified already carries each speaker's snippet + matching
+        # ▶ segment (same clip), so nothing extra to attach here.
         out.append({"stem": jf.stem, "speakers": unknown,
                     "has_audio": _source_audio_path(jf.stem) is not None})
     return jsonify({"transcripts": out, "people": engine.all_people(CONFIG)})

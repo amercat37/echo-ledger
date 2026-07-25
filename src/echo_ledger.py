@@ -242,34 +242,50 @@ def resolve_targets(target, dirs):
     return sorted(dirs["output"].glob("*.json"))
 
 
-def speaker_snippets(segments, limit=160):
-    out = {}
+def sample_segment_for(segments, label, min_dur=3.0):
+    """Pick ONE representative segment for a speaker — the clip both SHOWN as the
+    snippet and PLAYED by ▶, so what you read is exactly what you hear.
+
+    Prefers the first segment at least `min_dur` seconds long: a clean opening
+    ("Hello, thank you for calling...") beats the *longest* segment, which on a
+    busy call is often crosstalk. Falls back to the longest segment with speech.
+    Returns {"start", "end", "text"}, or None if the speaker has no timed speech.
+    """
+    with_speech = []
     for seg in segments:
-        spk, txt = seg.get("speaker"), seg.get("text", "").strip()
-        if spk and txt and len(out.get(spk, "")) < limit:
-            out[spk] = (out.get(spk, "") + " " + txt).strip()
-    return out
+        if seg.get("speaker") != label:
+            continue
+        txt = seg.get("text", "").strip()
+        s, e = seg.get("start"), seg.get("end")
+        if txt and s is not None and e is not None:
+            with_speech.append({"start": s, "end": e, "text": txt})
+    if not with_speech:
+        return None
+    for seg in with_speech:
+        if (seg["end"] - seg["start"]) >= min_dur:
+            return seg
+    return max(with_speech, key=lambda s: s["end"] - s["start"])
 
 
 def list_unidentified(data, config, profiles=None):
     """Speakers in one transcript that did NOT match a profile but have real
-    speech — the candidates a human can name. Returns a list of dicts:
-      {"label": raw_label, "snippet": "...", "score": best_score}
-    (`score` is the closest existing profile, for reference; usually low.)"""
+    speech — the candidates a human can name. Each dict carries the SAME segment
+    for its snippet text and its ▶ play range:
+      {"label", "snippet", "score", "segment": {"start", "end"}}."""
     if profiles is None:
         profiles = prof.load_profiles(config["speakers_file"])
     segments = data.get("segments", [])
     emb = data.get("speaker_embeddings", {})
-    snippets = speaker_snippets(segments)
     out = []
     for label, vec in emb.items():
         name, score = prof.best_match(vec, profiles, config["threshold"])
         if name:
             continue  # already identified
-        snip = snippets.get(label, "").strip()
-        if not snip:
+        seg = sample_segment_for(segments, label)
+        if not seg:
             continue  # no speech (automated attendant / empty cluster) — skip
-        out.append({"label": label, "snippet": snip, "score": round(score, 3)})
+        out.append({"label": label, "snippet": seg["text"], "score": round(score, 3),
+                    "segment": {"start": seg["start"], "end": seg["end"]}})
     return out
 
 
@@ -320,30 +336,14 @@ def all_people(config, profiles=None):
     return [{"name": n, "samples": len(v)} for n, v in sorted(profiles.items())]
 
 
-def best_segment_for(segments, label):
-    """The longest spoken segment for a raw speaker label (for ▶ play). Returns
-    {start, end} or None if the speaker has no timestamped speech."""
-    best = None
-    for seg in segments:
-        if seg.get("speaker") != label or not seg.get("text", "").strip():
-            continue
-        s, e = seg.get("start"), seg.get("end")
-        if s is None or e is None:
-            continue
-        if best is None or (e - s) > (best["end"] - best["start"]):
-            best = {"start": s, "end": e}
-    return best
-
-
 def transcript_speakers(data, config, profiles=None):
     """Every speaker with real speech in one transcript, with everything the
-    re-tag UI needs: current shown label, profile match, snippet, ▶ segment,
-    and any per-transcript override."""
+    re-tag UI needs: current shown label, profile match, and the SAME segment for
+    its snippet + ▶ play range, plus any per-transcript override."""
     if profiles is None:
         profiles = prof.load_profiles(config["speakers_file"])
     segments = data.get("segments", [])
     emb = data.get("speaker_embeddings", {})
-    snippets = speaker_snippets(segments)
     overrides = data.get("label_overrides", {})
     name_map, _ = match_speakers(data, config, profiles)
     display = refine_speakers.display_labels(segments, apply_overrides(dict(name_map), data))
@@ -353,8 +353,8 @@ def transcript_speakers(data, config, profiles=None):
         label = seg.get("speaker")
         if not label or label in seen:
             continue
-        snip = snippets.get(label, "").strip()
-        if not snip:
+        sample = sample_segment_for(segments, label)
+        if not sample:
             continue  # silent cluster — nothing to identify or play
         seen.add(label)
         matched, score = prof.best_match(emb.get(label, []), profiles, config["threshold"])
@@ -363,9 +363,9 @@ def transcript_speakers(data, config, profiles=None):
             "display": display.get(label, label),
             "matched_name": matched,
             "score": round(score, 3),
-            "snippet": snip,
+            "snippet": sample["text"],
             "override": overrides.get(label),  # None=auto, ""=forced generic, else name
-            "segment": best_segment_for(segments, label),
+            "segment": {"start": sample["start"], "end": sample["end"]},
         })
     return out
 
