@@ -11,6 +11,8 @@ failed/
 state/
 speakers.json
 bench/
+tests/
+requirements-dev.txt
 *.mp3
 *.m4a
 *.wav

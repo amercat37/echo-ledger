@@ -1,0 +1,3 @@
+# Dev/test only — NOT installed into the Docker image (keeps it lean).
+# Install locally:  uv pip install -r requirements-dev.txt   (or pip)
+pytest==8.3.4

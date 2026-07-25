@@ -159,3 +159,20 @@ routes the file. The CLI and the Flask web app (`src/web.py`) both call it.
 - `src/profiles.py` — voiceprint store + cosine matching.
 - `src/refine_speakers.py` — fill diarization gaps, majority-vote segments, render markdown.
 - `src/templates/` — web UI pages.
+
+---
+
+## Tests
+
+Fast unit + route tests (`tests/`), no models or audio needed — WhisperX is
+monkeypatched and every test runs against a temp dir, so they never touch your
+real `speakers.json` or transcripts.
+
+```bash
+uv pip install -r requirements-dev.txt   # or: pip install -r requirements-dev.txt
+pytest                                    # ~0.2s, 46 tests
+```
+
+They cover matching, the snippet/▶-segment alignment, per-transcript overrides,
+enroll/rename/delete, delete + retention, atomic writes, and the HTTP routes.
+`pytest` is a dev-only dependency and is not included in the Docker image.

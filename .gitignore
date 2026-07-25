@@ -22,3 +22,4 @@ scratch_*
 *.ogg
 *.mp4
 *.aac
+.pytest_cache/
