@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -96,6 +97,18 @@ def recover_orphans():
         print(f"recovered {len(found)} interrupted file(s) from input/: "
               + ", ".join(found), flush=True)
     return found
+
+
+def retention_worker():
+    """Once a day, delete source audio whose transcript is older than
+    RETENTION_DAYS (transcripts are always kept). Disabled when RETENTION_DAYS<=0."""
+    days = CONFIG["retention_days"]
+    while days > 0:
+        removed = engine.sweep_old_audio(DIRS, days)
+        if removed:
+            print(f"retention: deleted {len(removed)} audio file(s) older than "
+                  f"{days}d (transcripts kept): " + ", ".join(removed), flush=True)
+        time.sleep(24 * 3600)
 
 
 def _next_queued():
@@ -320,6 +333,18 @@ def api_people_delete():
     return jsonify(engine.delete_person_all(CONFIG, DIRS, p.get("name", "")))
 
 
+@app.route("/api/delete", methods=["POST"])
+def api_delete():
+    """Delete a transcript and its source audio. Body: {stem, audio_only?}.
+    audio_only=true keeps the transcript and just frees the (bulky, biometric) audio."""
+    p = request.get_json(force=True)
+    stem = Path(p.get("stem", "")).name
+    if not (DIRS["output"] / f"{stem}.md").is_file() and not (DIRS["output"] / f"{stem}.json").is_file():
+        abort(404)
+    removed = engine.delete_transcript(stem, DIRS, audio_only=bool(p.get("audio_only")))
+    return jsonify({"ok": True, "removed": removed})
+
+
 @app.route("/api/transcript/<stem>")
 def api_transcript(stem):
     """Everything the per-transcript re-tag panel needs: all speakers + the
@@ -351,23 +376,9 @@ def api_retag():
 
 
 def _source_audio_path(stem):
-    """Locate the original audio for a transcript so ▶ play can stream it. Prefers
-    the recorded `source_audio` in the JSON; falls back to matching done/<stem>.*.
-    Returns an absolute Path, or None if the audio is gone."""
-    jf = DIRS["output"] / f"{stem}.json"
-    if jf.is_file():
-        try:
-            src = json.loads(jf.read_text()).get("source_audio")
-        except Exception:
-            src = None
-        if src:
-            cand = DIRS["done"] / Path(src).name
-            if cand.is_file():
-                return cand.resolve()
-    for cand in sorted(DIRS["done"].glob(f"{stem}.*")):
-        if cand.suffix.lower() in engine.AUDIO_EXTS:
-            return cand.resolve()
-    return None
+    """Absolute path to a transcript's source audio (for ▶ play), or None if gone."""
+    ap = engine.source_audio_path(stem, DIRS)
+    return ap.resolve() if ap else None
 
 
 @app.route("/audio/<stem>")
@@ -406,6 +417,7 @@ def _parse_transcript(md):
 def main():
     recover_orphans()  # resume anything left in input/ from a crash/restart
     threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=retention_worker, daemon=True).start()
     port = int(os.environ.get("PORT", "5000"))
     # Listen on all interfaces INSIDE the container; the compose port publish
     # (127.0.0.1:5000:5000) is what actually restricts access to localhost.

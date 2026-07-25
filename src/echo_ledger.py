@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import refine_speakers
@@ -59,6 +60,7 @@ def load_config():
         "language": os.environ.get("LANGUAGE", "en"),
         "threshold": float(os.environ.get("MATCH_THRESHOLD", "0.5")),
         "speakers_file": os.environ.get("SPEAKERS_FILE", "speakers.json"),
+        "retention_days": int(os.environ.get("RETENTION_DAYS", "30")),
     }
 
 
@@ -169,7 +171,8 @@ def process_file(audio_path, config, dirs):
         data["source_audio"] = audio_path.name  # so the web UI can serve it for ▶ play
         final_stem = resolve_stem(dirs["output"], stem)
         name_map = render_markdown(data, dirs["output"] / f"{final_stem}.md", config)
-        (dirs["output"] / f"{final_stem}.json").write_text(json.dumps(data, indent=2))
+        refine_speakers.atomic_write_text(
+            dirs["output"] / f"{final_stem}.json", json.dumps(data, indent=2))
 
         shutil.move(str(audio_path), str(dirs["done"] / audio_path.name))
         _, report = match_speakers(data, config)
@@ -356,7 +359,7 @@ def set_override(json_path, dirs, config, label, action, name=None, profiles=Non
         if not (name or "").strip():
             return {"ok": False, "error": "no name given"}
         overrides.pop(label, None)
-        json_path.write_text(json.dumps(data, indent=2))
+        refine_speakers.atomic_write_text(json_path, json.dumps(data, indent=2))
         enroll_headless(data, {label: name}, config, profiles)
         scanned, named = relabel_all(config, dirs)
         return {"ok": True, "action": "name", "name": name.strip(),
@@ -369,7 +372,7 @@ def set_override(json_path, dirs, config, label, action, name=None, profiles=Non
     else:
         return {"ok": False, "error": f"unknown action '{action}'"}
 
-    json_path.write_text(json.dumps(data, indent=2))
+    refine_speakers.atomic_write_text(json_path, json.dumps(data, indent=2))
     md = dirs["output"] / f"{json_path.stem}.md"
     render_markdown(data, md, config, profiles)
     return {"ok": True, "action": action}
@@ -394,6 +397,62 @@ def delete_person_all(config, dirs, name):
     prof.save_profiles(config["speakers_file"], profiles)
     scanned, _ = relabel_all(config, dirs, profiles)
     return {"ok": True, "name": name, "scanned": scanned}
+
+
+# ---------------------------------------------------------------- delete / retention
+
+def source_audio_path(stem, dirs):
+    """Locate the original audio for a transcript in done/. Prefers the recorded
+    `source_audio` in the JSON; falls back to matching done/<stem>.*. None if gone."""
+    jf = dirs["output"] / f"{stem}.json"
+    if jf.is_file():
+        try:
+            src = json.loads(jf.read_text()).get("source_audio")
+        except Exception:
+            src = None
+        if src:
+            cand = dirs["done"] / Path(src).name
+            if cand.is_file():
+                return cand
+    for cand in sorted(dirs["done"].glob(f"{stem}.*")):
+        if cand.suffix.lower() in AUDIO_EXTS:
+            return cand
+    return None
+
+
+def delete_transcript(stem, dirs, audio_only=False):
+    """Delete a transcript's source audio and (unless audio_only) its md + json.
+    Returns the list of things removed."""
+    removed = []
+    ap = source_audio_path(stem, dirs)
+    if ap and ap.is_file():
+        ap.unlink()
+        removed.append("audio")
+    if not audio_only:
+        for ext in (".md", ".json"):
+            f = dirs["output"] / f"{stem}{ext}"
+            if f.is_file():
+                f.unlink()
+                removed.append(ext)
+    return removed
+
+
+def sweep_old_audio(dirs, days, now=None):
+    """Delete source audio whose transcript is older than `days` (by the JSON's
+    mtime = when it was processed/last re-tagged). Transcripts are kept. days<=0
+    disables. Returns the list of deleted audio filenames."""
+    if days <= 0:
+        return []
+    cutoff = (now if now is not None else time.time()) - days * 86400
+    removed = []
+    for jf in sorted(dirs["output"].glob("*.json")):
+        if jf.stat().st_mtime >= cutoff:
+            continue
+        ap = source_audio_path(jf.stem, dirs)
+        if ap and ap.is_file():
+            ap.unlink()
+            removed.append(ap.name)
+    return removed
 
 
 def enroll_cmd(target, config, dirs):

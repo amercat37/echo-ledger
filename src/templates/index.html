@@ -94,8 +94,17 @@ function renderDone(items) {
     return `<div class="row"><div class="name" style="min-width:0;">${esc(it.stem)}</div>
       <span class="spacer"></span>${tag}
       <a class="btn sm" href="/view/${encodeURIComponent(it.stem)}">View</a>
-      <a class="btn sm" href="/download/${encodeURIComponent(it.stem)}">Download</a></div>`;
+      <a class="btn sm" href="/download/${encodeURIComponent(it.stem)}">Download</a>
+      <button class="btn sm ghost" style="color:var(--err);"
+        onclick="del(${JSON.stringify(it.stem)})">Delete</button></div>`;
   }).join('');
+}
+
+async function del(stem) {
+  if (!confirm(`Delete "${stem}" — the transcript and its original audio? This can't be undone.`)) return;
+  await fetch('/api/delete', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ stem }) });
+  refresh();
 }
 
 async function refresh() {

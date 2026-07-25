@@ -14,8 +14,25 @@ ingest pipeline, plus a standalone CLI that writes `.refined.{txt,srt,json}`
 next to a WhisperX JSON.
 """
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
+
+
+def atomic_write_text(path, text):
+    """Write a file all-or-nothing (temp in the same dir + rename). Prevents a
+    half-written file if two threads render the same transcript concurrently."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def midpoint(item):
@@ -175,7 +192,7 @@ def write_markdown(segments, path, label_map=None):
         lines.append(f"**{name}** · {ts(start)}")
         lines.append(text)
         lines.append("")
-    Path(path).write_text("\n".join(lines).rstrip() + "\n")
+    atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 
 
 def write_txt(segments, path):
