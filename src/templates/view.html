@@ -46,13 +46,16 @@ function speakerRow(sp) {
   const play = (HAS_AUDIO && sp.segment)
     ? `<button class="btn sm ghost" onclick='EL.play(STEM, ${sp.segment.start}, ${sp.segment.end}, this)'>▶</button>`
     : '';
-  const opts = ['<option value="auto">Auto (match voice)</option>'];
-  PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}">${esc(p.name)}</option>`));
+  // Selected option reflects who this speaker currently IS: their matched name,
+  // or "Unnamed" if forced generic, else "Auto".
+  let cur = 'auto';
+  if (sp.override === '') cur = 'generic';
+  else if (sp.matched_name) cur = 'p:' + sp.matched_name;
+  const s = v => v === cur ? ' selected' : '';
+  const opts = [`<option value="auto"${s('auto')}>Auto (match voice)</option>`];
+  PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}"${s('p:'+p.name)}>${esc(p.name)}</option>`));
   opts.push('<option value="__new__">+ Add new person…</option>');
-  opts.push('<option value="generic">Unnamed (Speaker N)</option>');
-  // reflect current state
-  let sel = 'auto';
-  if (sp.override === '') sel = 'generic';
+  opts.push(`<option value="generic"${s('generic')}>Unnamed (Speaker N)</option>`);
   const scoreTxt = sp.matched_name ? ` <span class="muted" style="font-size:12px;">(${sp.score})</span>` : '';
   return `<div class="row" data-label="${esc(sp.label)}">
     <div style="min-width:0; flex:1;">
