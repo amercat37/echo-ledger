@@ -1,6 +1,6 @@
 # Echo Ledger — Status Checkpoint
 
-_Last updated: 2026-07-23_
+_Last updated: 2026-07-25_
 
 Audio → speaker-tagged transcript tool. Drop audio in, get a clean markdown
 transcript out with **known speakers automatically named** (enroll a voice once,
@@ -13,10 +13,12 @@ memory vault.
 |-------|-------|--------|
 | **1** | Dockerized batch ingest: drop audio → transcribe → markdown + JSON → done/failed | ✅ **done & verified** |
 | **2** | Speaker identification: enroll once, auto-name after | ✅ **done & verified (local + container)** |
-| **3** | Web "process" button / folder-watcher (wraps `process_file()`) | ⬜ not started |
+| **3** | Web UI: upload → serial queue → view/download + speaker tagging | ✅ **done & verified (local + container)** |
 
-Deferred: 30-day retention sweep for aged audio/JSON; auto-push transcripts into
-the memory vault; the "ignore/system" bucket for recurring automated attendants.
+Deferred: 30-day retention sweep for aged audio/JSON; the "ignore/system" bucket
+for recurring automated attendants. **Retired:** auto-push transcripts into the
+memory vault (would violate the vault's one-writer rule — the web UI only
+displays + downloads; filing into Obsidian stays manual).
 
 ## What works today
 
@@ -33,23 +35,30 @@ the memory vault; the "ignore/system" bucket for recurring automated attendants.
 ## How to run
 
 ```bash
-# Local (after: source activate.sh)
-python3 src/echo_ledger.py                 # batch: transcribe everything in input/
-python3 src/echo_ledger.py enroll <stem>   # name a transcript's unknown speakers
-python3 src/echo_ledger.py relabel <stem>  # re-apply profiles to past transcripts
+# Web UI (primary)
+docker compose up web            # → http://127.0.0.1:5000  (localhost-only)
 
-# Docker (run-on-demand)
-docker compose build
-docker compose run --rm echo-ledger           # batch
-docker compose run --rm echo-ledger enroll <stem>   # interactive (has a TTY)
+# Docker batch / run-on-demand (same image)
+docker compose run --rm echo-ledger                 # transcribe input/
+docker compose run --rm echo-ledger enroll <stem>   # interactive naming (TTY)
+docker compose run --rm echo-ledger relabel         # re-apply profiles to all
 ```
+
+Web UI: **Transcribe** page = drag-drop → auto-enqueue → visible queue (per-item
+cancel + global pause) → completed list with View + Download. **Tag speakers**
+page = name unknown voices → enroll voiceprint → auto re-label every transcript.
 
 ## Key files
 
-- `src/echo_ledger.py` — CLI + `process_file()` (the reusable per-file engine).
+- `src/echo_ledger.py` — CLI + `process_file()` (reusable engine; returns a
+  result dict) + `list_unidentified` / `enroll_headless` / `relabel_all` (web helpers).
+- `src/web.py` — Flask app: upload, serial worker thread + queue, pause/cancel,
+  view/download, tagging (`/api/enroll` → `relabel_all`).
+- `src/templates/` — `base` / `index` (transcribe) / `view` / `tag` pages.
 - `src/profiles.py` — `speakers.json` load/save, cosine match, enrollment.
 - `src/refine_speakers.py` — gap-fill/re-vote + `write_markdown` / `display_labels`.
-- `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `env.sample`, `requirements.txt`.
+- `Dockerfile`, `docker-compose.yml` (`echo-ledger` batch + `web` service),
+  `.dockerignore`, `env.sample`, `requirements.txt` (whisperx + flask).
 - `run-test.sh`, `bench_models.py` — legacy/dev (single-file test, model benchmark).
 
 ## Config (env; see `env.sample`)
@@ -64,12 +73,15 @@ docker compose run --rm echo-ledger enroll <stem>   # interactive (has a TTY)
 - **Keep `.env` to just `HF_TOKEN`** — extra vars there can override the container's
   Dockerfile paths.
 - **`speakers.json` is biometric** — gitignored, never baked into the image.
-- Models (~2 GB) persist in the `hf-cache` named volume across container runs.
-- On Mac, a future watcher must **poll** `input/` (Docker bind-mount FS events are
-  unreliable across the VM); add a `processing/` atomic-move claim before concurrency.
+- Models (~2 GB) persist in the `hf-cache` named volume; whisperx's ~360 MB
+  English alignment model persists in the `torch-cache` volume (populated on the
+  first web run — no re-download after).
+- The web worker is a single serial thread (the M3 is CPU-only); pause only takes
+  effect between jobs, and cancel only applies to still-queued items.
 
 ## Next step
 
-Phase 3: a folder-watcher (poll-based, same image, long-running container) or a
-web "process" button (adds a small job/queue layer since transcription is slow).
-Both just call the existing `process_file()`.
+Phase 3 is done. Possible follow-ups (all optional): put Traefik in front (moves
+TLS + auth off localhost; must keep the enroll endpoint protected); the 30-day
+retention sweep; accumulate more voiceprints per person as they're enrolled from
+more files.
