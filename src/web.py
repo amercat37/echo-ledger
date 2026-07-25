@@ -48,12 +48,16 @@ _wake = threading.Event()
 _paused = False
 
 
-def _new_job(filename):
+def _new_job(filename, kind="transcribe", stem=None,
+             min_speakers=None, max_speakers=None):
     return {
         "id": uuid.uuid4().hex[:12],
-        "filename": filename,   # name as staged in input/
+        "filename": filename,   # display label (staged name, or "<stem> (reprocess)")
+        "kind": kind,           # "transcribe" (new upload) | "reprocess" (existing audio)
         "status": "queued",     # queued | transcribing | done | failed | canceled
-        "stem": None,           # output stem once done
+        "stem": stem,           # output stem (set upfront for reprocess; on done for uploads)
+        "min_speakers": min_speakers,
+        "max_speakers": max_speakers,
         "error": None,
     }
 
@@ -134,14 +138,17 @@ def worker():
             _wake.clear()
             continue
 
-        audio_path = DIRS["input"] / job["filename"]
-        log.info("worker: starting job %s (%s)", job["id"], job["filename"])
-        result = engine.process_file(audio_path, CONFIG, DIRS)
+        log.info("worker: starting %s job %s (%s)", job["kind"], job["id"], job["filename"])
+        if job["kind"] == "reprocess":
+            result = engine.reprocess(job["stem"], CONFIG, DIRS,
+                                      job["min_speakers"], job["max_speakers"])
+        else:
+            result = engine.process_file(DIRS["input"] / job["filename"], CONFIG, DIRS)
         with _lock:
             if result["ok"]:
                 job["status"] = "done"
-                job["stem"] = result["stem"]
-                log.info("worker: job %s done -> %s", job["id"], result["stem"])
+                job["stem"] = result.get("stem", job["stem"])
+                log.info("worker: job %s done -> %s", job["id"], job["stem"])
             else:
                 job["status"] = "failed"
                 job["error"] = result["error"]
@@ -206,7 +213,7 @@ def api_state():
     with _lock:
         queue = [
             {"id": j["id"], "filename": j["filename"], "status": j["status"],
-             "error": j["error"], "stem": j["stem"]}
+             "error": j["error"], "stem": j["stem"], "kind": j["kind"]}
             for j in _jobs if j["status"] != "done"
         ]
         paused = _paused
@@ -358,6 +365,38 @@ def api_delete():
     removed = engine.delete_transcript(stem, DIRS, audio_only=audio_only)
     log.info("delete %s (audio_only=%s): removed %s", stem, audio_only, removed)
     return jsonify({"ok": True, "removed": removed})
+
+
+@app.route("/api/reprocess", methods=["POST"])
+def api_reprocess():
+    """Queue a re-transcription of an existing transcript's original audio, with an
+    optional speaker-count hint. Body: {stem, num_speakers?, min_speakers?, max_speakers?}.
+    `num_speakers` (exact) wins and sets min=max; otherwise min/max are used as given.
+    Goes through the same serial worker so it never runs alongside another transcription."""
+    p = request.get_json(force=True)
+    stem = Path(p.get("stem", "")).name
+    if not (DIRS["output"] / f"{stem}.json").is_file():
+        abort(404)
+    if _source_audio_path(stem) is None:
+        return jsonify({"ok": False, "error": "original audio not found "
+                        "(deleted or aged out) — can't reprocess."}), 409
+
+    def _int(v):
+        try:
+            return int(v) if v not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return None
+
+    num = _int(p.get("num_speakers"))
+    lo = num or _int(p.get("min_speakers"))
+    hi = num or _int(p.get("max_speakers"))
+    job = _new_job(f"{stem} (reprocess)", kind="reprocess", stem=stem,
+                   min_speakers=lo, max_speakers=hi)
+    with _lock:
+        _jobs.append(job)
+    _wake.set()
+    log.info("queued reprocess of %s (min=%s max=%s), job %s", stem, lo, hi, job["id"])
+    return jsonify({"ok": True, "id": job["id"], "min_speakers": lo, "max_speakers": hi})
 
 
 @app.route("/api/transcript/<stem>")

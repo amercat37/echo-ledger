@@ -97,6 +97,23 @@ def test_tags_lists_unknown_speakers(client, dirs, data):
     assert "u" in stems
 
 
+def test_reprocess_enqueues_with_exact_count(client, seed, dirs):
+    (dirs["done"] / "meeting.mp3").write_bytes(b"A")   # source audio present
+    r = client.post("/api/reprocess", json={"stem": seed, "num_speakers": 2}).get_json()
+    assert r["ok"] and r["min_speakers"] == 2 and r["max_speakers"] == 2   # exact -> min=max
+    job = web._jobs[-1]
+    assert job["kind"] == "reprocess" and job["stem"] == "m" and job["status"] == "queued"
+
+
+def test_reprocess_unknown_stem_404(client):
+    assert client.post("/api/reprocess", json={"stem": "nope"}).status_code == 404
+
+
+def test_reprocess_audio_gone_409(client, seed):
+    # transcript exists (seed) but its audio was never put in done/
+    assert client.post("/api/reprocess", json={"stem": seed, "num_speakers": 2}).status_code == 409
+
+
 def test_missing_stem_is_404(client):
     assert client.get("/view/nope").status_code == 404
     assert client.get("/audio/nope").status_code == 404

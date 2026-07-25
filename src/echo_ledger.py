@@ -140,7 +140,11 @@ def render_markdown(data, md_path, config, profiles=None):
 
 # ---------------------------------------------------------------- transcription
 
-def run_whisperx(audio_path, out_dir, config):
+def run_whisperx(audio_path, out_dir, config, min_speakers=None, max_speakers=None):
+    """Run WhisperX (transcribe + diarize + speaker embeddings) → JSON path.
+
+    min_speakers / max_speakers hint the diarizer's speaker count (default: let it
+    auto-detect). Setting both to the same value forces exactly that many speakers."""
     if not config["hf_token"]:
         raise RuntimeError("HF_TOKEN is not set (needed for diarization).")
     cmd = [
@@ -155,6 +159,10 @@ def run_whisperx(audio_path, out_dir, config):
         "-f", "json",
         "--output_dir", str(out_dir),
     ]
+    if min_speakers:
+        cmd += ["--min_speakers", str(min_speakers)]
+    if max_speakers:
+        cmd += ["--max_speakers", str(max_speakers)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"whisperx exited {proc.returncode}\n{proc.stderr[-2000:]}")
@@ -162,6 +170,17 @@ def run_whisperx(audio_path, out_dir, config):
     if not produced.is_file():
         raise RuntimeError(f"whisperx produced no JSON at {produced}\n{proc.stderr[-2000:]}")
     return produced
+
+
+def _transcribe(audio_path, config, min_speakers=None, max_speakers=None):
+    """Transcribe + refine one file → the data dict (with source_audio recorded).
+    Shared by process_file (new uploads) and reprocess (re-run existing audio)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_json = run_whisperx(audio_path, Path(tmp), config, min_speakers, max_speakers)
+        data = json.loads(raw_json.read_text())
+    refine_speakers.refine_data(data)
+    data["source_audio"] = audio_path.name  # so the web UI can serve it for ▶ play
+    return data
 
 
 def resolve_stem(output_dir, stem):
@@ -187,12 +206,7 @@ def process_file(audio_path, config, dirs):
              config["model"], config["device"])
     t0 = time.time()
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            raw_json = run_whisperx(audio_path, Path(tmp), config)
-            data = json.loads(raw_json.read_text())
-
-        refine_speakers.refine_data(data)
-        data["source_audio"] = audio_path.name  # so the web UI can serve it for ▶ play
+        data = _transcribe(audio_path, config)
         final_stem = resolve_stem(dirs["output"], stem)
         name_map = render_markdown(data, dirs["output"] / f"{final_stem}.md", config)
         refine_speakers.atomic_write_text(
@@ -219,6 +233,41 @@ def process_file(audio_path, config, dirs):
         log.error("FAILED %s after %.1fs: %s", audio_path.name, time.time() - t0, exc,
                   exc_info=True)
         return {"ok": False, "stem": None, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def reprocess(stem, config, dirs, min_speakers=None, max_speakers=None):
+    """Re-run transcription on an existing transcript's ORIGINAL audio (in done/),
+    with an optional speaker-count hint, and overwrite that transcript in place.
+
+    Used to rescue recordings the diarizer got wrong (e.g. two people merged into
+    one speaker) — pass min/max speakers to steer it. Fresh diarization means fresh
+    speaker labels, so any prior per-transcript overrides are dropped. On failure
+    the existing transcript is left untouched. Needs the source audio to still exist.
+    """
+    ap = source_audio_path(stem, dirs)
+    if ap is None:
+        return {"ok": False, "error": "original audio not found (deleted or aged out) "
+                                       "— can't reprocess."}
+    log.info("reprocess %s from %s (min_speakers=%s max_speakers=%s)",
+             stem, ap.name, min_speakers, max_speakers)
+    t0 = time.time()
+    try:
+        data = _transcribe(ap, config, min_speakers, max_speakers)
+        # same stem → overwrite in place; render first, then persist the JSON.
+        name_map = render_markdown(data, dirs["output"] / f"{stem}.md", config)
+        refine_speakers.atomic_write_text(
+            dirs["output"] / f"{stem}.json", json.dumps(data, indent=2))
+        _, report = match_speakers(data, config)
+        n = len(data.get("speaker_embeddings", {}))
+        log.info("reprocess done %s (%.1fs, %d speaker(s))", stem, time.time() - t0, n)
+        for label, name, score in report:
+            log.info("  %s -> %s (score %.3f, threshold %.2f)",
+                     label, name or "unidentified", score, config["threshold"])
+        return {"ok": True, "stem": stem, "speakers": n, "report": report}
+    except Exception as exc:
+        log.error("reprocess FAILED %s after %.1fs: %s", stem, time.time() - t0, exc,
+                  exc_info=True)
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def gather_audio(input_dir):

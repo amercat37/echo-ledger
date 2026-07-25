@@ -50,6 +50,15 @@ Two pages:
   save: the voiceprint is stored and **every past transcript is re-labeled**
   automatically. No re-transcription — labeling is instant.
 
+Open a transcript (**View**) and you also get **Copy** (transcript markdown to the
+clipboard) and **Reprocess**. Reprocess re-runs transcription on the *original audio*
+with an optional **number-of-speakers** hint — use it when the diarizer got the speaker
+split wrong (two people merged into one, or one person split in two). Leave the count
+blank for auto, or set the exact number if you know it (an Advanced option takes a
+min/max range). It needs the original audio to still exist and runs through the same
+serial queue. Caveat: very similar voices recorded on one mic may not separate no matter
+the hint — the separation has to exist in the audio.
+
 Downloaded files keep the original name (`myrecording.md`). Echo Ledger never
 writes to your Obsidian vault — filing the `.md` there stays a deliberate manual
 step (so Livesync remains the vault's only writer).
@@ -117,6 +126,7 @@ lines around the problem) — it almost always contains the answer. Set
 | A file failed to transcribe | Log line `FAILED <file>: ...` (includes the whisperx error) and `failed/<name>.error.txt`. Usually a bad/empty audio file or a diarization model issue. |
 | Diarization won't run / auth error | Startup line `HF_TOKEN present: False`, or a token/terms error in the FAILED line. Fix `HF_TOKEN` in `.env` and accept the model terms on huggingface.co. |
 | "Why wasn't I recognized?" | The `SPEAKER_xx -> ... (score, threshold)` line. A match needs `score ≥ threshold` (default 0.50). Short/noisy clips score lower — enroll that person from more recordings, or lower `MATCH_THRESHOLD`. |
+| Two people merged into one speaker (or one split in two) | Diarization miscounted. Open the transcript → **Reprocess** with the right number of speakers. Note: near-identical voices on one mic may not separate regardless — that needs separate mics at recording time. |
 | ▶ Play does nothing | The audio was deleted (by you or the 30-day retention sweep). The transcript stays, but playback needs the original in `done/`. |
 | Web UI won't load | `docker compose ps` (is `web` up?) and `docker compose logs web` for a startup error. |
 | Interrupted job after a restart | Look for `recovered N interrupted file(s) from input/` at startup — it resumes automatically. |
@@ -170,7 +180,7 @@ real `speakers.json` or transcripts.
 
 ```bash
 uv pip install -r requirements-dev.txt   # or: pip install -r requirements-dev.txt
-pytest                                    # ~0.2s, 46 tests
+pytest                                    # ~0.2s, 51 tests
 ```
 
 They cover matching, the snippet/▶-segment alignment, per-transcript overrides,

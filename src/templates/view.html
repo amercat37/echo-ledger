@@ -5,8 +5,50 @@
 <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
   <a class="link" href="{{ url_for('index') }}">← Back</a>
   <span class="spacer" style="margin-left:auto;"></span>
+  <button id="reprocBtn" class="btn sm ghost">Reprocess</button>
   <button id="copyBtn" class="btn sm">Copy</button>
   <a class="btn sm" href="{{ url_for('download', stem=stem) }}">Download .md</a>
+</div>
+
+<div id="reprocModal" style="display:none; position:fixed; inset:0; z-index:50;
+     background:rgba(0,0,0,.45); align-items:center; justify-content:center;">
+  <div class="card" style="max-width:440px; width:92%; padding:20px;">
+    <h2 style="margin-top:0;">Reprocess transcript</h2>
+    <p class="muted" style="font-size:13px; margin-top:0;">
+      Re-runs transcription on the original audio. Use this if speakers got merged
+      into one, or split incorrectly.
+    </p>
+    <label style="font-weight:600; font-size:14px;">Number of speakers</label>
+    <input id="numSpk" type="number" min="1" placeholder="auto"
+      style="width:100%; padding:9px 11px; margin:6px 0 4px; border:1px solid var(--line);
+             border-radius:8px; background:var(--bg); color:var(--ink); font-size:15px;">
+    <div class="muted" style="font-size:12px;">
+      Leave blank to auto-detect, or enter the exact number if you know it.
+    </div>
+    <details style="margin-top:12px;">
+      <summary class="muted" style="font-size:13px; cursor:pointer;">Advanced (a range instead)</summary>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <div style="flex:1;"><label class="muted" style="font-size:12px;">Min speakers</label>
+          <input id="minSpk" type="number" min="1" placeholder="—" style="width:100%; padding:7px;
+            border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink);"></div>
+        <div style="flex:1;"><label class="muted" style="font-size:12px;">Max speakers</label>
+          <input id="maxSpk" type="number" min="1" placeholder="—" style="width:100%; padding:7px;
+            border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink);"></div>
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:6px;">
+        “At least min, at most max.” The exact number above (if set) overrides these.
+      </div>
+    </details>
+    <div class="chip warn" style="display:block; margin-top:14px; font-weight:500;
+         white-space:normal; line-height:1.4;">
+      Re-transcribes from the original audio (it must still exist). Very similar voices
+      on one mic may not separate no matter the setting.
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+      <button class="btn sm ghost" id="reprocCancel">Cancel</button>
+      <button class="btn primary sm" id="reprocGo">Reprocess</button>
+    </div>
+  </div>
 </div>
 <h1 style="font-size:22px; margin:6px 0 16px;">{{ stem }}</h1>
 
@@ -127,6 +169,43 @@ document.querySelector('#copyBtn').addEventListener('click', async () => {
   }
   setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
 });
+
+// --- Reprocess: re-run transcription on the original audio with a speaker hint ---
+const modal = document.querySelector('#reprocModal');
+document.querySelector('#reprocBtn').addEventListener('click', () => modal.style.display = 'flex');
+document.querySelector('#reprocCancel').addEventListener('click', () => modal.style.display = 'none');
+modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+
+document.querySelector('#reprocGo').addEventListener('click', async () => {
+  const body = {
+    stem: STEM,
+    num_speakers: document.querySelector('#numSpk').value || null,
+    min_speakers: document.querySelector('#minSpk').value || null,
+    max_speakers: document.querySelector('#maxSpk').value || null,
+  };
+  const j = await (await fetch('/api/reprocess', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  })).json();
+  modal.style.display = 'none';
+  if (!j.ok) { notice.textContent = 'Reprocess failed: ' + (j.error || 'unknown'); return; }
+  notice.textContent = 'Reprocessing… this re-transcribes the audio (can take a bit). '
+    + 'The page reloads automatically when it finishes.';
+  pollReprocess();
+});
+
+async function pollReprocess() {
+  for (let i = 0; i < 600; i++) {                       // up to ~25 min
+    await new Promise(r => setTimeout(r, 2500));
+    let s;
+    try { s = await (await fetch('/api/state')).json(); } catch { continue; }
+    const job = s.queue.find(j => j.kind === 'reprocess' && j.stem === STEM);
+    if (!job) { location.reload(); return; }            // left the queue = done
+    if (job.status === 'failed') {
+      notice.textContent = 'Reprocess failed: ' + (job.error || 'unknown');
+      return;
+    }
+  }
+}
 
 loadSpeakers();
 </script>

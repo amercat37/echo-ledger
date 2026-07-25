@@ -178,7 +178,7 @@ def test_process_file_end_to_end(dirs, config, monkeypatch):
         "speaker_embeddings": {"SPEAKER_00": [1.0, 0.0, 0.0, 0.0]},
     }
 
-    def fake_whisperx(audio_path, out_dir, cfg):
+    def fake_whisperx(audio_path, out_dir, cfg, min_speakers=None, max_speakers=None):
         p = out_dir / f"{audio_path.stem}.json"
         p.write_text(json.dumps(canned))
         return p
@@ -197,7 +197,7 @@ def test_process_file_end_to_end(dirs, config, monkeypatch):
 
 
 def test_process_file_failure_routes_to_failed(dirs, config, monkeypatch):
-    def boom(audio_path, out_dir, cfg):
+    def boom(audio_path, out_dir, cfg, min_speakers=None, max_speakers=None):
         raise RuntimeError("whisperx exploded")
 
     monkeypatch.setattr(engine, "run_whisperx", boom)
@@ -208,3 +208,44 @@ def test_process_file_failure_routes_to_failed(dirs, config, monkeypatch):
     assert res["ok"] is False and "whisperx exploded" in res["error"]
     assert (dirs["failed"] / "bad.mp3").exists()
     assert (dirs["failed"] / "bad.error.txt").exists()
+
+
+# ---- reprocess (WhisperX monkeypatched) --------------------------------------
+
+def test_reprocess_overwrites_in_place_and_passes_hint(dirs, config, write_transcript,
+                                                       data, monkeypatch):
+    write_transcript("m", data)                       # source_audio == meeting.mp3
+    (dirs["output"] / "m.md").write_text("old markdown")
+    (dirs["done"] / "meeting.mp3").write_bytes(b"AUDIO")
+    two = {
+        "segments": [
+            {"speaker": "SPEAKER_00", "start": 0.0, "end": 4.0, "text": "one two three",
+             "words": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 4.0, "word": "one"}]},
+            {"speaker": "SPEAKER_01", "start": 4.0, "end": 8.0, "text": "four five six",
+             "words": [{"speaker": "SPEAKER_01", "start": 4.0, "end": 8.0, "word": "four"}]},
+        ],
+        "speaker_embeddings": {"SPEAKER_00": [1, 0, 0, 0], "SPEAKER_01": [0, 1, 0, 0]},
+    }
+    seen = {}
+
+    def fake(audio_path, out_dir, cfg, min_speakers=None, max_speakers=None):
+        seen["min"], seen["max"] = min_speakers, max_speakers
+        p = out_dir / f"{audio_path.stem}.json"
+        p.write_text(json.dumps(two))
+        return p
+
+    monkeypatch.setattr(engine, "run_whisperx", fake)
+    res = engine.reprocess("m", config, dirs, min_speakers=2, max_speakers=2)
+
+    assert res["ok"] and res["speakers"] == 2
+    assert seen == {"min": 2, "max": 2}                       # hint reached whisperx
+    saved = json.loads((dirs["output"] / "m.json").read_text())
+    assert len(saved["speaker_embeddings"]) == 2              # overwritten in place
+    assert (dirs["done"] / "meeting.mp3").exists()             # audio left alone
+    assert "four five six" in (dirs["output"] / "m.md").read_text()  # re-rendered
+
+
+def test_reprocess_missing_audio_is_error(dirs, config, write_transcript, data):
+    write_transcript("m", data)                       # no audio in done/
+    res = engine.reprocess("m", config, dirs)
+    assert res["ok"] is False and "audio" in res["error"].lower()
