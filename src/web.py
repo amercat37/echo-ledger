@@ -82,6 +82,22 @@ def enqueue(file_storage):
     return job
 
 
+def recover_orphans():
+    """Re-enqueue any audio still sitting in input/ at startup. All pending work
+    — files queued OR interrupted mid-transcription — lives in input/ until
+    process_file finishes and moves it to done/, so anything here after a restart
+    is unfinished. This makes a crash/reboot self-healing: the container comes back
+    (restart policy) and resumes exactly what it was doing. Called once before the
+    worker starts, so no lock is needed."""
+    found = [p.name for p in engine.gather_audio(DIRS["input"])]
+    for name in found:
+        _jobs.append(_new_job(name))
+    if found:
+        print(f"recovered {len(found)} interrupted file(s) from input/: "
+              + ", ".join(found), flush=True)
+    return found
+
+
 def _next_queued():
     for job in _jobs:
         if job["status"] == "queued":
@@ -388,6 +404,7 @@ def _parse_transcript(md):
 
 
 def main():
+    recover_orphans()  # resume anything left in input/ from a crash/restart
     threading.Thread(target=worker, daemon=True).start()
     port = int(os.environ.get("PORT", "5000"))
     # Listen on all interfaces INSIDE the container; the compose port publish

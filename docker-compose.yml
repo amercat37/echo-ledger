@@ -26,6 +26,9 @@ services:
     image: echo-ledger:latest
     env_file: .env
     entrypoint: ["python", "src/web.py"]
+    # Always-on personal service: come back after a crash or a Mac reboot
+    # (once Docker Desktop is running). Does not auto-start if you `compose stop`.
+    restart: unless-stopped
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
