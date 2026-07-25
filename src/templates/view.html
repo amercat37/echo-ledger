@@ -5,6 +5,7 @@
 <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
   <a class="link" href="{{ url_for('index') }}">← Back</a>
   <span class="spacer" style="margin-left:auto;"></span>
+  <button id="copyBtn" class="btn sm">Copy</button>
   <a class="btn sm" href="{{ url_for('download', stem=stem) }}">Download .md</a>
 </div>
 <h1 style="font-size:22px; margin:6px 0 16px;">{{ stem }}</h1>
@@ -113,6 +114,19 @@ async function onRetag(label, sel) {
     notice.textContent = 'Failed: ' + (j.error || 'unknown');
   }
 }
+
+// Copy the transcript markdown (what you'd paste into Obsidian) to the clipboard.
+document.querySelector('#copyBtn').addEventListener('click', async () => {
+  const btn = document.querySelector('#copyBtn');
+  try {
+    const md = await (await fetch('/download/' + encodeURIComponent(STEM))).text();
+    await navigator.clipboard.writeText(md);
+    btn.textContent = 'Copied ✓';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+});
 
 loadSpeakers();
 </script>
