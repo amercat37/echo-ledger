@@ -78,10 +78,46 @@
     <nav>
       <a href="{{ url_for('index') }}" class="{{ 'active' if active=='home' }}">Transcribe</a>
       <a href="{{ url_for('tag') }}" class="{{ 'active' if active=='tag' }}">Tag speakers</a>
+      <a href="{{ url_for('speakers') }}" class="{{ 'active' if active=='speakers' }}">People</a>
     </nav>
   </header>
   <main>
     {% block body %}{% endblock %}
   </main>
+  <script>
+    // Shared ▶ play helper. One <audio> element per page; plays just a speaker's
+    // segment [start,end] of /audio/<stem>, and turns any ▶ button back to idle
+    // when it stops. Buttons call EL.play(stem, start, end, btnEl).
+    window.EL = (function () {
+      let el = null, stopAt = null, active = null;
+      function audio() {
+        if (!el) {
+          el = new Audio();
+          el.addEventListener('timeupdate', () => {
+            if (stopAt != null && el.currentTime >= stopAt) { el.pause(); }
+          });
+          el.addEventListener('pause', reset);
+          el.addEventListener('ended', reset);
+        }
+        return el;
+      }
+      function reset() {
+        if (active) { active.textContent = active.dataset.idle || '▶'; active = null; }
+        stopAt = null;
+      }
+      function play(stem, start, end, btn) {
+        const a = audio();
+        const src = '/audio/' + encodeURIComponent(stem);
+        if (active === btn) { a.pause(); return; }          // toggle off
+        if (active) reset();
+        if (a.src.indexOf(src) === -1) a.src = src;
+        a.currentTime = start || 0;
+        stopAt = (end != null) ? end : null;
+        active = btn; btn.dataset.idle = btn.textContent; btn.textContent = '⏸';
+        a.play().catch(() => { reset(); });
+      }
+      return { play };
+    })();
+  </script>
 </body>
 </html>

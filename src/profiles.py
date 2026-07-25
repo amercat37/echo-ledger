@@ -11,6 +11,8 @@ people <=0.39 — so a threshold around 0.5 separates cleanly.
 """
 import json
 import math
+import os
+import tempfile
 from pathlib import Path
 
 
@@ -22,9 +24,35 @@ def load_profiles(path):
 
 
 def save_profiles(path, profiles):
+    """Write the profile store atomically (temp file in the same dir + rename),
+    so a crash mid-write can't corrupt the biometric store."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(profiles, indent=2))
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".speakers-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(profiles, indent=2))
+        os.replace(tmp, p)  # atomic on POSIX
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def rename_person(profiles, old, new):
+    """Rename an enrolled person. If `new` already exists, their voiceprints are
+    merged. Returns True if anything changed."""
+    old, new = old.strip(), new.strip()
+    if not new or old not in profiles or old == new:
+        return False
+    profiles.setdefault(new, [])
+    profiles[new].extend(profiles.pop(old))
+    return True
+
+
+def delete_person(profiles, name):
+    """Remove an enrolled person (and all their voiceprints). Returns True if
+    they existed."""
+    return profiles.pop(name, None) is not None
 
 
 def cosine(a, b):

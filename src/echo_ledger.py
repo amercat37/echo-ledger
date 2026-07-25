@@ -91,11 +91,24 @@ def match_speakers(data, config, profiles=None):
     return name_map, report
 
 
+def apply_overrides(name_map, data):
+    """Layer per-transcript label overrides on top of the auto-match name_map.
+    `data["label_overrides"]` = {raw_label: name}; a name of "" forces that
+    speaker back to a generic `Speaker N` on this transcript only."""
+    for label, nm in data.get("label_overrides", {}).items():
+        if nm:
+            name_map[label] = nm
+        else:
+            name_map.pop(label, None)
+    return name_map
+
+
 def render_markdown(data, md_path, config, profiles=None):
-    """Apply current profiles and write the named markdown transcript. Returns
-    the {raw_label: real_name} matches used."""
+    """Apply current profiles (+ any per-transcript overrides) and write the named
+    markdown transcript. Returns the {raw_label: real_name} labels used."""
     segments = data.get("segments", [])
     name_map, _ = match_speakers(data, config, profiles)
+    apply_overrides(name_map, data)
     label_map = refine_speakers.display_labels(segments, name_map)
     refine_speakers.write_markdown(segments, md_path, label_map)
     return name_map
@@ -153,6 +166,7 @@ def process_file(audio_path, config, dirs):
             data = json.loads(raw_json.read_text())
 
         refine_speakers.refine_data(data)
+        data["source_audio"] = audio_path.name  # so the web UI can serve it for ▶ play
         final_stem = resolve_stem(dirs["output"], stem)
         name_map = render_markdown(data, dirs["output"] / f"{final_stem}.md", config)
         (dirs["output"] / f"{final_stem}.json").write_text(json.dumps(data, indent=2))
@@ -263,6 +277,123 @@ def relabel_all(config, dirs, profiles=None):
         if name_map:
             named += 1
     return scanned, named
+
+
+# ---------------------------------------------------------------- manage / re-tag
+
+def all_people(config, profiles=None):
+    """Sorted list of enrolled names, each with how many voiceprints it holds."""
+    if profiles is None:
+        profiles = prof.load_profiles(config["speakers_file"])
+    return [{"name": n, "samples": len(v)} for n, v in sorted(profiles.items())]
+
+
+def best_segment_for(segments, label):
+    """The longest spoken segment for a raw speaker label (for ▶ play). Returns
+    {start, end} or None if the speaker has no timestamped speech."""
+    best = None
+    for seg in segments:
+        if seg.get("speaker") != label or not seg.get("text", "").strip():
+            continue
+        s, e = seg.get("start"), seg.get("end")
+        if s is None or e is None:
+            continue
+        if best is None or (e - s) > (best["end"] - best["start"]):
+            best = {"start": s, "end": e}
+    return best
+
+
+def transcript_speakers(data, config, profiles=None):
+    """Every speaker with real speech in one transcript, with everything the
+    re-tag UI needs: current shown label, profile match, snippet, ▶ segment,
+    and any per-transcript override."""
+    if profiles is None:
+        profiles = prof.load_profiles(config["speakers_file"])
+    segments = data.get("segments", [])
+    emb = data.get("speaker_embeddings", {})
+    snippets = speaker_snippets(segments)
+    overrides = data.get("label_overrides", {})
+    name_map, _ = match_speakers(data, config, profiles)
+    display = refine_speakers.display_labels(segments, apply_overrides(dict(name_map), data))
+    out = []
+    seen = set()
+    for seg in segments:
+        label = seg.get("speaker")
+        if not label or label in seen:
+            continue
+        snip = snippets.get(label, "").strip()
+        if not snip:
+            continue  # silent cluster — nothing to identify or play
+        seen.add(label)
+        matched, score = prof.best_match(emb.get(label, []), profiles, config["threshold"])
+        out.append({
+            "label": label,
+            "display": display.get(label, label),
+            "matched_name": matched,
+            "score": round(score, 3),
+            "snippet": snip,
+            "override": overrides.get(label),  # None=auto, ""=forced generic, else name
+            "segment": best_segment_for(segments, label),
+        })
+    return out
+
+
+def set_override(json_path, dirs, config, label, action, name=None, profiles=None):
+    """Apply a re-tag action to one speaker on one transcript and re-render.
+
+    action:
+      'name'    -> enroll this voiceprint under `name` (existing or new) and
+                   relabel EVERY transcript (teaches the system). Also clears any
+                   forced-generic override on this label.
+      'generic' -> force this speaker to `Speaker N` on THIS transcript only.
+      'auto'    -> clear the override; fall back to profile auto-match.
+    """
+    json_path = Path(json_path)
+    data = json.loads(json_path.read_text())
+    overrides = data.setdefault("label_overrides", {})
+
+    if action == "name":
+        if not (name or "").strip():
+            return {"ok": False, "error": "no name given"}
+        overrides.pop(label, None)
+        json_path.write_text(json.dumps(data, indent=2))
+        enroll_headless(data, {label: name}, config, profiles)
+        scanned, named = relabel_all(config, dirs)
+        return {"ok": True, "action": "name", "name": name.strip(),
+                "scanned": scanned, "named": named}
+
+    if action == "generic":
+        overrides[label] = ""
+    elif action == "auto":
+        overrides.pop(label, None)
+    else:
+        return {"ok": False, "error": f"unknown action '{action}'"}
+
+    json_path.write_text(json.dumps(data, indent=2))
+    md = dirs["output"] / f"{json_path.stem}.md"
+    render_markdown(data, md, config, profiles)
+    return {"ok": True, "action": action}
+
+
+def rename_person_all(config, dirs, old, new):
+    """Rename an enrolled person everywhere, then relabel all transcripts."""
+    profiles = prof.load_profiles(config["speakers_file"])
+    if not prof.rename_person(profiles, old, new):
+        return {"ok": False, "error": "nothing to rename"}
+    prof.save_profiles(config["speakers_file"], profiles)
+    scanned, _ = relabel_all(config, dirs, profiles)
+    return {"ok": True, "old": old, "new": new.strip(), "scanned": scanned}
+
+
+def delete_person_all(config, dirs, name):
+    """Delete an enrolled person, then relabel all transcripts (their voice falls
+    back to the next match or a generic Speaker N)."""
+    profiles = prof.load_profiles(config["speakers_file"])
+    if not prof.delete_person(profiles, name):
+        return {"ok": False, "error": "no such person"}
+    prof.save_profiles(config["speakers_file"], profiles)
+    scanned, _ = relabel_all(config, dirs, profiles)
+    return {"ok": True, "name": name, "scanned": scanned}
 
 
 def enroll_cmd(target, config, dirs):

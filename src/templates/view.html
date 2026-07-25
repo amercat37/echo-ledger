@@ -7,12 +7,19 @@
   <span class="spacer" style="margin-left:auto;"></span>
   <a class="btn sm" href="{{ url_for('download', stem=stem) }}">Download .md</a>
 </div>
-<h1 style="font-size:22px; margin:6px 0 18px;">{{ stem }}</h1>
+<h1 style="font-size:22px; margin:6px 0 16px;">{{ stem }}</h1>
 
+<h2 style="margin-top:0;">Speakers in this recording</h2>
+<div id="speakers" class="card"><div class="empty">Loading…</div></div>
+<div id="notice" class="muted" style="margin:10px 2px 0; min-height:18px;"></div>
+
+<h2>Transcript</h2>
 <div class="card" style="padding:6px 4px;">
   {% for t in turns %}
   <div style="padding:12px 18px; border-bottom:1px solid var(--line);">
-    <div style="font-weight:700;">{{ t.name }}
+    <div style="font-weight:700; display:flex; align-items:center; gap:8px;">
+      <button class="btn sm ghost turn-play" data-ts="{{ t.ts }}" style="display:none; padding:2px 8px;">▶</button>
+      {{ t.name }}
       <span class="muted" style="font-weight:500; font-size:13px;">· {{ t.ts }}</span>
     </div>
     <div style="margin-top:3px;">{{ t.text }}</div>
@@ -22,8 +29,92 @@
   {% endfor %}
 </div>
 
+<script>
+const STEM = {{ stem|tojson }};
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const notice = document.querySelector('#notice');
+
+// "M:SS" or "H:MM:SS" -> seconds
+function parseTs(t) {
+  const p = t.split(':').map(Number);
+  return p.length === 3 ? p[0]*3600 + p[1]*60 + p[2] : p[0]*60 + p[1];
+}
+
+let PEOPLE = [], HAS_AUDIO = false;
+
+function speakerRow(sp) {
+  const play = (HAS_AUDIO && sp.segment)
+    ? `<button class="btn sm ghost" onclick='EL.play(STEM, ${sp.segment.start}, ${sp.segment.end}, this)'>▶</button>`
+    : '';
+  const opts = ['<option value="auto">Auto (match voice)</option>'];
+  PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}">${esc(p.name)}</option>`));
+  opts.push('<option value="__new__">+ Add new person…</option>');
+  opts.push('<option value="generic">Unnamed (Speaker N)</option>');
+  // reflect current state
+  let sel = 'auto';
+  if (sp.override === '') sel = 'generic';
+  const scoreTxt = sp.matched_name ? ` <span class="muted" style="font-size:12px;">(${sp.score})</span>` : '';
+  return `<div class="row" data-label="${esc(sp.label)}">
+    <div style="min-width:0; flex:1;">
+      <div class="name">${esc(sp.display)}${scoreTxt}</div>
+      <div class="muted" style="font-size:13px; white-space:normal;">“${esc(sp.snippet)}”</div>
+    </div>
+    <span class="spacer"></span>${play}
+    <select class="retag" style="padding:7px 10px; border:1px solid var(--line);
+      border-radius:8px; background:var(--bg); color:var(--ink); font-size:14px;">
+      ${opts.join('')}
+    </select>
+  </div>`;
+}
+
+async function loadSpeakers() {
+  const d = await (await fetch('/api/transcript/' + encodeURIComponent(STEM))).json();
+  PEOPLE = d.people; HAS_AUDIO = d.has_audio;
+  const box = document.querySelector('#speakers');
+  box.innerHTML = d.speakers.length
+    ? d.speakers.map(speakerRow).join('')
+    : '<div class="empty">No identifiable speakers.</div>';
+  box.querySelectorAll('.retag').forEach(sel => {
+    const label = sel.closest('[data-label]').dataset.label;
+    sel.addEventListener('change', () => onRetag(label, sel));
+  });
+  // per-turn play buttons
+  if (HAS_AUDIO) document.querySelectorAll('.turn-play').forEach(b => {
+    b.style.display = '';
+    b.addEventListener('click', () => EL.play(STEM, parseTs(b.dataset.ts), null, b));
+  });
+}
+
+async function onRetag(label, sel) {
+  const v = sel.value;
+  let action = 'auto', name = null;
+  if (v === 'generic') action = 'generic';
+  else if (v === 'auto') action = 'auto';
+  else if (v === '__new__') {
+    name = (prompt('Name for this speaker?') || '').trim();
+    if (!name) { sel.value = 'auto'; return; }
+    action = 'name';
+  } else if (v.startsWith('p:')) { action = 'name'; name = v.slice(2); }
+
+  notice.textContent = 'Updating…';
+  const j = await (await fetch('/api/retag', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ stem: STEM, label, action, name })
+  })).json();
+  if (j.ok) {
+    notice.textContent = action === 'name'
+      ? `Tagged as ${esc(j.name)} — re-labeled ${j.scanned} transcript(s). Reloading…`
+      : 'Updated. Reloading…';
+    setTimeout(() => location.reload(), 600);   // turns re-render server-side
+  } else {
+    notice.textContent = 'Failed: ' + (j.error || 'unknown');
+  }
+}
+
+loadSpeakers();
+</script>
+
 <p class="muted" style="margin-top:16px; font-size:13px;">
-  Speaker showing as “Speaker N”? Name them on the
-  <a class="link" href="{{ url_for('tag') }}">Tag speakers</a> page.
+  Manage everyone you've named on the <a class="link" href="{{ url_for('speakers') }}">People</a> page.
 </p>
 {% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}People — Echo Ledger{% endblock %}
+{% block body %}
+
+<p class="muted" style="margin-top:0;">
+  Everyone Echo Ledger has learned to recognize. Rename someone (updates every
+  transcript) or delete a voiceprint you got wrong — no need to touch any files.
+</p>
+
+<div id="list" class="card"><div class="empty">Loading…</div></div>
+<div id="notice" class="muted" style="margin-top:12px; min-height:20px;"></div>
+
+<script>
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const notice = document.querySelector('#notice');
+
+function row(p) {
+  const n = esc(p.name);
+  return `<div class="row" data-name="${n}">
+    <div style="flex:1; min-width:0;">
+      <span class="view-name name">${n}</span>
+      <input class="edit-name" value="${n}" style="display:none; padding:7px 10px;
+        border:1px solid var(--line); border-radius:8px; background:var(--bg);
+        color:var(--ink); font-size:15px; font-weight:600; width:200px;">
+      <span class="muted" style="font-size:13px; margin-left:8px;">${p.samples} voiceprint${p.samples===1?'':'s'}</span>
+    </div>
+    <span class="spacer" style="margin-left:auto;"></span>
+    <button class="btn sm ghost act-rename">Rename</button>
+    <button class="btn sm act-save" style="display:none;">Save</button>
+    <button class="btn sm ghost act-cancel" style="display:none;">Cancel</button>
+    <button class="btn sm ghost act-delete" style="color:var(--err);">Delete</button>
+  </div>`;
+}
+
+async function load() {
+  const { people } = await (await fetch('/api/people')).json();
+  const list = document.querySelector('#list');
+  if (!people.length) { list.innerHTML = '<div class="empty">No one enrolled yet. Name a voice on the Tag page and they show up here.</div>'; return; }
+  list.innerHTML = people.map(row).join('');
+  list.querySelectorAll('.row').forEach(wire);
+}
+
+function wire(r) {
+  const name = r.dataset.name;
+  const view = r.querySelector('.view-name'), edit = r.querySelector('.edit-name');
+  const btnR = r.querySelector('.act-rename'), btnS = r.querySelector('.act-save'),
+        btnC = r.querySelector('.act-cancel'), btnD = r.querySelector('.act-delete');
+  const mode = editing => {
+    view.style.display = editing ? 'none' : '';
+    edit.style.display = editing ? '' : 'none';
+    btnR.style.display = editing ? 'none' : '';
+    btnD.style.display = editing ? 'none' : '';
+    btnS.style.display = editing ? '' : 'none';
+    btnC.style.display = editing ? '' : 'none';
+    if (editing) { edit.focus(); edit.select(); }
+  };
+  btnR.onclick = () => mode(true);
+  btnC.onclick = () => { edit.value = name; mode(false); };
+  btnS.onclick = async () => {
+    const nn = edit.value.trim();
+    if (!nn || nn === name) { mode(false); return; }
+    notice.textContent = 'Renaming…';
+    const j = await post('/api/people/rename', { old: name, new: nn });
+    notice.textContent = j.ok ? `Renamed “${name}” → “${j.new}” across ${j.scanned} transcript(s).`
+                              : `Rename failed: ${j.error || 'unknown'}`;
+    load();
+  };
+  btnD.onclick = async () => {
+    if (!confirm(`Delete “${name}” and their voiceprints? Their voice will go back to “Speaker N” in every transcript until re-tagged.`)) return;
+    notice.textContent = 'Deleting…';
+    const j = await post('/api/people/delete', { name });
+    notice.textContent = j.ok ? `Deleted “${name}”. Re-labeled ${j.scanned} transcript(s).`
+                              : `Delete failed: ${j.error || 'unknown'}`;
+    load();
+  };
+}
+
+async function post(url, body) {
+  return (await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body) })).json();
+}
+
+load();
+</script>
+{% endblock %}

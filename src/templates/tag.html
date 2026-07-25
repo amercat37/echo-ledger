@@ -3,8 +3,9 @@
 {% block body %}
 
 <p class="muted" style="margin-top:0;">
-  Name an unknown voice once — Echo Ledger remembers it and auto-names that
-  person in every past and future transcript. Leave a box blank to skip it.
+  Name an unknown voice once — Echo Ledger remembers it and auto-names that person in
+  every past and future transcript. Hit ▶ to hear who it is. Pick an existing person to
+  keep names consistent, or add someone new. Leave a speaker on “Skip” to ignore it.
 </p>
 
 <div id="list"><div class="card"><div class="empty">Loading…</div></div></div>
@@ -13,26 +14,42 @@
 <script>
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const notice = document.querySelector('#notice');
+let PEOPLE = [];
+
+function nameControl(label) {
+  const opts = ['<option value="">Skip</option>'];
+  PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}">${esc(p.name)}</option>`));
+  opts.push('<option value="__new__">+ Add new person…</option>');
+  return `<select class="pick" style="padding:8px 10px; border:1px solid var(--line);
+      border-radius:8px; background:var(--bg); color:var(--ink); font-size:14px; width:170px;">
+      ${opts.join('')}</select>
+    <input class="newname" placeholder="new name…" style="display:none; margin-left:8px;
+      padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+      background:var(--bg); color:var(--ink); font-size:14px; width:150px;">`;
+}
+
+function speakerRow(sp, stem, hasAudio) {
+  const play = (hasAudio && sp.segment)
+    ? `<button class="btn sm ghost" onclick='EL.play(${JSON.stringify(stem)}, ${sp.segment.start}, ${sp.segment.end}, this)'>▶</button>`
+    : '';
+  return `<div class="row" data-label="${esc(sp.label)}">
+    <div style="min-width:0; flex:1;">
+      <div class="name">${esc(sp.label)}</div>
+      <div class="muted" style="font-size:13px; white-space:normal;">“${esc(sp.snippet)}”</div>
+    </div>
+    ${play}${nameControl(sp.label)}
+  </div>`;
+}
 
 function card(t) {
-  const rows = t.speakers.map(sp => `
-    <div class="row">
-      <div style="min-width:0; flex:1;">
-        <div class="name">${esc(sp.label)}</div>
-        <div class="muted" style="font-size:13px; white-space:normal;">“${esc(sp.snippet)}”</div>
-      </div>
-      <input class="nameInput" data-label="${esc(sp.label)}" placeholder="name…"
-        style="padding:8px 10px; border:1px solid var(--line); border-radius:8px;
-               background:var(--bg); color:var(--ink); font-size:14px; width:150px;">
-    </div>`).join('');
   return `<div class="card" data-stem="${esc(t.stem)}" style="margin-bottom:18px;">
       <div class="row" style="background:var(--chip);">
         <div class="name">${esc(t.stem)}</div>
         <span class="spacer" style="margin-left:auto;"></span>
         <span class="chip warn">${t.speakers.length} unknown</span>
-        <a class="btn sm ghost" href="/view/${encodeURIComponent(t.stem)}">View</a>
+        <a class="btn sm ghost" href="/view/${encodeURIComponent(t.stem)}">Open</a>
       </div>
-      ${rows}
+      ${t.speakers.map(sp => speakerRow(sp, t.stem, t.has_audio)).join('')}
       <div class="row" style="justify-content:flex-end;">
         <button class="btn primary sm save">Save &amp; re-label all</button>
       </div>
@@ -41,12 +58,19 @@ function card(t) {
 
 async function load() {
   const data = await (await fetch('/api/tags')).json();
+  PEOPLE = data.people || [];
   const list = document.querySelector('#list');
   if (!data.transcripts.length) {
     list.innerHTML = '<div class="card"><div class="empty">🎉 No unknown speakers — every transcript is fully named.</div></div>';
     return;
   }
   list.innerHTML = data.transcripts.map(card).join('');
+  list.querySelectorAll('.pick').forEach(sel => sel.addEventListener('change', () => {
+    const nn = sel.parentElement.querySelector('.newname');
+    const isNew = sel.value === '__new__';
+    nn.style.display = isNew ? '' : 'none';
+    if (isNew) nn.focus();
+  }));
   list.querySelectorAll('.save').forEach(btn =>
     btn.addEventListener('click', () => save(btn.closest('[data-stem]'))));
 }
@@ -54,20 +78,21 @@ async function load() {
 async function save(cardEl) {
   const stem = cardEl.dataset.stem;
   const names = {};
-  cardEl.querySelectorAll('.nameInput').forEach(inp => {
-    const v = inp.value.trim();
-    if (v) names[inp.dataset.label] = v;
+  cardEl.querySelectorAll('.row[data-label]').forEach(r => {
+    const label = r.dataset.label, sel = r.querySelector('.pick');
+    let v = sel.value;
+    if (v === '__new__') v = 'p:' + r.querySelector('.newname').value.trim();
+    if (v.startsWith('p:') && v.length > 2) names[label] = v.slice(2);
   });
-  if (!Object.keys(names).length) { notice.textContent = 'Enter at least one name first.'; return; }
+  if (!Object.keys(names).length) { notice.textContent = 'Pick a name for at least one speaker first.'; return; }
   notice.textContent = 'Enrolling and re-labeling…';
-  const r = await fetch('/api/enroll', {
+  const j = await (await fetch('/api/enroll', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ stem, names })
-  });
-  const j = await r.json();
-  if (j.ok) notice.textContent =
-    `Enrolled ${j.added.join(', ')}. Re-scanned ${j.scanned} transcript(s), ${j.named} now named.`;
-  else notice.textContent = 'Nothing enrolled.';
+  })).json();
+  notice.textContent = j.ok
+    ? `Enrolled ${j.added.join(', ')}. Re-scanned ${j.scanned} transcript(s), ${j.named} now named.`
+    : 'Nothing enrolled.';
   load();
 }
 

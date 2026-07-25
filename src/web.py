@@ -239,8 +239,8 @@ def tag():
 
 @app.route("/api/tags")
 def api_tags():
-    """Every transcript that still has unknown speakers with real speech."""
-
+    """Every transcript that still has unknown speakers with real speech, enriched
+    with a ▶ play segment per speaker, plus the shared people dropdown."""
     profiles = engine.prof.load_profiles(CONFIG["speakers_file"])
     out = []
     for jf in sorted(DIRS["output"].glob("*.json"),
@@ -250,9 +250,14 @@ def api_tags():
         except Exception:
             continue
         unknown = engine.list_unidentified(data, CONFIG, profiles)
-        if unknown:
-            out.append({"stem": jf.stem, "speakers": unknown})
-    return jsonify({"transcripts": out})
+        if not unknown:
+            continue
+        segments = data.get("segments", [])
+        for sp in unknown:
+            sp["segment"] = engine.best_segment_for(segments, sp["label"])
+        out.append({"stem": jf.stem, "speakers": unknown,
+                    "has_audio": _source_audio_path(jf.stem) is not None})
+    return jsonify({"transcripts": out, "people": engine.all_people(CONFIG)})
 
 
 @app.route("/api/enroll", methods=["POST"])
@@ -272,6 +277,91 @@ def api_enroll():
         return jsonify({"ok": False, "added": [], "scanned": 0, "named": 0})
     scanned, named = engine.relabel_all(CONFIG, DIRS, profiles)
     return jsonify({"ok": True, "added": added, "scanned": scanned, "named": named})
+
+
+# ---------------------------------------------------------------- manage / re-tag
+
+@app.route("/speakers")
+def speakers():
+    return render_template("speakers.html", active="speakers")
+
+
+@app.route("/api/people")
+def api_people():
+    return jsonify({"people": engine.all_people(CONFIG)})
+
+
+@app.route("/api/people/rename", methods=["POST"])
+def api_people_rename():
+    p = request.get_json(force=True)
+    return jsonify(engine.rename_person_all(CONFIG, DIRS,
+                                            p.get("old", ""), p.get("new", "")))
+
+
+@app.route("/api/people/delete", methods=["POST"])
+def api_people_delete():
+    p = request.get_json(force=True)
+    return jsonify(engine.delete_person_all(CONFIG, DIRS, p.get("name", "")))
+
+
+@app.route("/api/transcript/<stem>")
+def api_transcript(stem):
+    """Everything the per-transcript re-tag panel needs: all speakers + the
+    people dropdown."""
+    stem = _safe_stem(stem)
+    jf = DIRS["output"] / f"{stem}.json"
+    if not jf.is_file():
+        abort(404)
+    data = json.loads(jf.read_text())
+    return jsonify({
+        "stem": stem,
+        "speakers": engine.transcript_speakers(data, CONFIG),
+        "people": engine.all_people(CONFIG),
+        "has_audio": _source_audio_path(stem) is not None,
+    })
+
+
+@app.route("/api/retag", methods=["POST"])
+def api_retag():
+    """Re-tag one speaker on one transcript. Body:
+    {stem, label, action: 'name'|'generic'|'auto', name?}."""
+    p = request.get_json(force=True)
+    stem = Path(p.get("stem", "")).name
+    jf = DIRS["output"] / f"{stem}.json"
+    if not jf.is_file():
+        abort(404)
+    return jsonify(engine.set_override(
+        jf, DIRS, CONFIG, p.get("label", ""), p.get("action", ""), p.get("name")))
+
+
+def _source_audio_path(stem):
+    """Locate the original audio for a transcript so ▶ play can stream it. Prefers
+    the recorded `source_audio` in the JSON; falls back to matching done/<stem>.*.
+    Returns an absolute Path, or None if the audio is gone."""
+    jf = DIRS["output"] / f"{stem}.json"
+    if jf.is_file():
+        try:
+            src = json.loads(jf.read_text()).get("source_audio")
+        except Exception:
+            src = None
+        if src:
+            cand = DIRS["done"] / Path(src).name
+            if cand.is_file():
+                return cand.resolve()
+    for cand in sorted(DIRS["done"].glob(f"{stem}.*")):
+        if cand.suffix.lower() in engine.AUDIO_EXTS:
+            return cand.resolve()
+    return None
+
+
+@app.route("/audio/<stem>")
+def audio(stem):
+    stem = _safe_stem(stem)
+    src = _source_audio_path(stem)
+    if src is None:
+        abort(404)
+    # conditional=True enables HTTP range requests so the browser can seek.
+    return send_file(src, conditional=True)
 
 
 # ---------------------------------------------------------------- md rendering
