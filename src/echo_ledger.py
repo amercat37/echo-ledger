@@ -18,6 +18,7 @@ is cosine similarity against speakers.json. Config comes from env (see env.sampl
 The per-file unit is `process_file()` so a future watcher / web button reuses it.
 """
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -30,6 +31,26 @@ import refine_speakers
 import profiles as prof
 
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".flac", ".ogg", ".mp4", ".aac"}
+ECHO_VERSION = "1.0"
+
+log = logging.getLogger("echo.engine")
+
+
+def setup_logging(level="INFO"):
+    """Configure one formatted stdout handler for the whole app (engine + web).
+
+    Every line is `<time> <LEVEL> [<component>] <message>` so a pasted log is
+    self-describing and greppable. Shared by the CLI and the web service. The
+    chatty werkzeug request log is turned down to WARNING so it doesn't bury the
+    meaningful events (the web UI polls /api/state every ~1.5s).
+    """
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, str(level).upper(), logging.INFO))
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s [%(name)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+    root.handlers = [handler]  # replace any default/duplicate handlers
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
 # ---------------------------------------------------------------- config
@@ -61,6 +82,7 @@ def load_config():
         "threshold": float(os.environ.get("MATCH_THRESHOLD", "0.5")),
         "speakers_file": os.environ.get("SPEAKERS_FILE", "speakers.json"),
         "retention_days": int(os.environ.get("RETENTION_DAYS", "30")),
+        "log_level": os.environ.get("LOG_LEVEL", "INFO"),
     }
 
 
@@ -161,7 +183,9 @@ def process_file(audio_path, config, dirs):
     """
     audio_path = Path(audio_path)
     stem = audio_path.stem
-    print(f"  -> {audio_path.name}: transcribing...", flush=True)
+    log.info("transcribing %s (model=%s device=%s)", audio_path.name,
+             config["model"], config["device"])
+    t0 = time.time()
     try:
         with tempfile.TemporaryDirectory() as tmp:
             raw_json = run_whisperx(audio_path, Path(tmp), config)
@@ -176,19 +200,24 @@ def process_file(audio_path, config, dirs):
 
         shutil.move(str(audio_path), str(dirs["done"] / audio_path.name))
         _, report = match_speakers(data, config)
-        print(f"     done: output/{final_stem}.md")
+        dur = time.time() - t0
+        log.info("done %s -> output/%s.md (%.1fs, %d speaker(s))",
+                 audio_path.name, final_stem, dur, len(report))
         for label, name, score in report:
-            who = name if name else "unidentified"
-            print(f"       {label} -> {who} ({score:.3f})")
+            # These per-speaker scores are the key diagnostic for "why wasn't X
+            # recognized?" — a match needs score >= %.2f (MATCH_THRESHOLD).
+            log.info("  %s -> %s (score %.3f, threshold %.2f)",
+                     label, name or "unidentified", score, config["threshold"])
         return {"ok": True, "stem": final_stem, "name_map": name_map, "report": report}
     except Exception as exc:
         dest = dirs["failed"] / audio_path.name
         try:
             shutil.move(str(audio_path), str(dest))
         except Exception:
-            pass
+            log.warning("could not move %s to failed/", audio_path.name)
         (dirs["failed"] / f"{stem}.error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
-        print(f"     FAILED: {exc}", flush=True)
+        log.error("FAILED %s after %.1fs: %s", audio_path.name, time.time() - t0, exc,
+                  exc_info=True)
         return {"ok": False, "stem": None, "error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -503,22 +532,23 @@ def run_batch(config, dirs):
         sys.exit("Error: HF_TOKEN is not set (env or .env). Needed for transcription.")
     files = gather_audio(dirs["input"])
     if not files:
-        print("nothing to process (input/ is empty)")
+        log.info("nothing to process (input/ is empty)")
         return 0
-    print(f"processing {len(files)} file(s) from {dirs['input']}/")
+    log.info("batch: processing %d file(s) from %s/", len(files), dirs["input"])
     ok = failed = 0
     for f in files:
         if process_file(f, config, dirs)["ok"]:
             ok += 1
         else:
             failed += 1
-    print(f"\nsummary: {ok} transcribed, {failed} failed")
+    log.info("batch summary: %d transcribed, %d failed", ok, failed)
     return 1 if failed else 0
 
 
 def main():
     args = sys.argv[1:]
     config = load_config()
+    setup_logging(config["log_level"])
     dirs = load_dirs()
     if args and args[0] == "enroll":
         return enroll_cmd(args[1] if len(args) > 1 else None, config, dirs)

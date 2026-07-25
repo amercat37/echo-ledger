@@ -16,6 +16,7 @@ Design invariants (see the project brief):
     you DOWNLOAD the markdown; filing it into Obsidian stays a manual step.
 """
 import json
+import logging
 import os
 import sys
 import threading
@@ -31,6 +32,7 @@ from werkzeug.utils import secure_filename
 import echo_ledger as engine
 
 app = Flask(__name__)
+log = logging.getLogger("echo.web")
 
 CONFIG = engine.load_config()
 DIRS = engine.load_dirs()
@@ -80,6 +82,7 @@ def enqueue(file_storage):
     with _lock:
         _jobs.append(job)
     _wake.set()
+    log.info("queued %s (job %s), %d byte(s)", dest.name, job["id"], dest.stat().st_size)
     return job
 
 
@@ -94,8 +97,8 @@ def recover_orphans():
     for name in found:
         _jobs.append(_new_job(name))
     if found:
-        print(f"recovered {len(found)} interrupted file(s) from input/: "
-              + ", ".join(found), flush=True)
+        log.info("recovered %d interrupted file(s) from input/: %s",
+                 len(found), ", ".join(found))
     return found
 
 
@@ -106,8 +109,8 @@ def retention_worker():
     while days > 0:
         removed = engine.sweep_old_audio(DIRS, days)
         if removed:
-            print(f"retention: deleted {len(removed)} audio file(s) older than "
-                  f"{days}d (transcripts kept): " + ", ".join(removed), flush=True)
+            log.info("retention: deleted %d audio file(s) older than %dd "
+                     "(transcripts kept): %s", len(removed), days, ", ".join(removed))
         time.sleep(24 * 3600)
 
 
@@ -132,14 +135,17 @@ def worker():
             continue
 
         audio_path = DIRS["input"] / job["filename"]
+        log.info("worker: starting job %s (%s)", job["id"], job["filename"])
         result = engine.process_file(audio_path, CONFIG, DIRS)
         with _lock:
             if result["ok"]:
                 job["status"] = "done"
                 job["stem"] = result["stem"]
+                log.info("worker: job %s done -> %s", job["id"], result["stem"])
             else:
                 job["status"] = "failed"
                 job["error"] = result["error"]
+                log.warning("worker: job %s FAILED -> %s", job["id"], result["error"])
 
 
 # ---------------------------------------------------------------- disk views
@@ -219,6 +225,7 @@ def api_cancel(job_id):
                 if job["status"] == "queued":
                     job["status"] = "canceled"
                     (DIRS["input"] / job["filename"]).unlink(missing_ok=True)
+                    log.info("canceled queued job %s (%s)", job["id"], job["filename"])
                     return jsonify({"ok": True})
                 # transcribing/done/failed can't be pulled from the queue
                 return jsonify({"ok": False, "reason": job["status"]}), 409
@@ -242,6 +249,7 @@ def api_pause():
     with _lock:
         _paused = bool(request.json.get("paused")) if request.is_json else not _paused
     _wake.set()
+    log.info("worker %s", "PAUSED" if _paused else "resumed")
     return jsonify({"paused": _paused})
 
 
@@ -303,8 +311,11 @@ def api_enroll():
     data = json.loads(jf.read_text())
     profiles, added = engine.enroll_headless(data, names, CONFIG)
     if not added:
+        log.info("enroll on %s: nothing added", stem)
         return jsonify({"ok": False, "added": [], "scanned": 0, "named": 0})
     scanned, named = engine.relabel_all(CONFIG, DIRS, profiles)
+    log.info("enroll on %s: added %s; relabeled %d transcript(s), %d named",
+             stem, ", ".join(added), scanned, named)
     return jsonify({"ok": True, "added": added, "scanned": scanned, "named": named})
 
 
@@ -323,14 +334,17 @@ def api_people():
 @app.route("/api/people/rename", methods=["POST"])
 def api_people_rename():
     p = request.get_json(force=True)
-    return jsonify(engine.rename_person_all(CONFIG, DIRS,
-                                            p.get("old", ""), p.get("new", "")))
+    result = engine.rename_person_all(CONFIG, DIRS, p.get("old", ""), p.get("new", ""))
+    log.info("people.rename %r -> %r: %s", p.get("old"), p.get("new"), result)
+    return jsonify(result)
 
 
 @app.route("/api/people/delete", methods=["POST"])
 def api_people_delete():
     p = request.get_json(force=True)
-    return jsonify(engine.delete_person_all(CONFIG, DIRS, p.get("name", "")))
+    result = engine.delete_person_all(CONFIG, DIRS, p.get("name", ""))
+    log.info("people.delete %r: %s", p.get("name"), result)
+    return jsonify(result)
 
 
 @app.route("/api/delete", methods=["POST"])
@@ -341,7 +355,9 @@ def api_delete():
     stem = Path(p.get("stem", "")).name
     if not (DIRS["output"] / f"{stem}.md").is_file() and not (DIRS["output"] / f"{stem}.json").is_file():
         abort(404)
-    removed = engine.delete_transcript(stem, DIRS, audio_only=bool(p.get("audio_only")))
+    audio_only = bool(p.get("audio_only"))
+    removed = engine.delete_transcript(stem, DIRS, audio_only=audio_only)
+    log.info("delete %s (audio_only=%s): removed %s", stem, audio_only, removed)
     return jsonify({"ok": True, "removed": removed})
 
 
@@ -371,8 +387,11 @@ def api_retag():
     jf = DIRS["output"] / f"{stem}.json"
     if not jf.is_file():
         abort(404)
-    return jsonify(engine.set_override(
-        jf, DIRS, CONFIG, p.get("label", ""), p.get("action", ""), p.get("name")))
+    result = engine.set_override(
+        jf, DIRS, CONFIG, p.get("label", ""), p.get("action", ""), p.get("name"))
+    log.info("retag %s label=%s action=%s name=%r: %s", stem, p.get("label"),
+             p.get("action"), p.get("name"), result)
+    return jsonify(result)
 
 
 def _source_audio_path(stem):
@@ -415,10 +434,23 @@ def _parse_transcript(md):
 
 
 def main():
+    engine.setup_logging(CONFIG["log_level"])
+    port = int(os.environ.get("PORT", "5000"))
+    # Startup banner — this block tells you the whole runtime config at a glance,
+    # so a pasted log is self-diagnosing (versions, model, dirs, token present?).
+    log.info("Echo Ledger v%s starting on 0.0.0.0:%d (log level %s)",
+             engine.ECHO_VERSION, port, CONFIG["log_level"])
+    log.info("config: model=%s device=%s compute=%s language=%s threshold=%.2f "
+             "retention_days=%d", CONFIG["model"], CONFIG["device"],
+             CONFIG["compute_type"], CONFIG["language"], CONFIG["threshold"],
+             CONFIG["retention_days"])
+    log.info("paths: input=%s output=%s done=%s failed=%s speakers=%s",
+             DIRS["input"], DIRS["output"], DIRS["done"], DIRS["failed"],
+             CONFIG["speakers_file"])
+    log.info("HF_TOKEN present: %s", bool(CONFIG["hf_token"]))
     recover_orphans()  # resume anything left in input/ from a crash/restart
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=retention_worker, daemon=True).start()
-    port = int(os.environ.get("PORT", "5000"))
     # Listen on all interfaces INSIDE the container; the compose port publish
     # (127.0.0.1:5000:5000) is what actually restricts access to localhost.
     app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)

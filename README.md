@@ -82,6 +82,45 @@ state/    speakers.json — the voiceprint library
 
 ---
 
+## Logs & troubleshooting
+
+All activity is logged to the container's stdout. To see it:
+
+```bash
+docker compose logs web              # everything so far
+docker compose logs -f web           # follow live
+docker compose logs --tail=100 web   # last 100 lines
+```
+
+Each line is `<time> <LEVEL> [<component>] <message>`. A run looks like:
+
+```
+2026-07-25 18:42:38 INFO [echo.web] Echo Ledger v1.0 starting on 0.0.0.0:5000 (log level INFO)
+2026-07-25 18:42:38 INFO [echo.web] config: model=large-v3-turbo device=cpu ... threshold=0.50 retention_days=30
+2026-07-25 18:42:38 INFO [echo.web] HF_TOKEN present: True
+2026-07-25 18:42:40 INFO [echo.web] worker: starting job 8a03... (small1.mp3)
+2026-07-25 18:42:53 INFO [echo.engine] done small1.mp3 -> output/small1.md (13.8s, 1 speaker(s))
+2026-07-25 18:42:53 INFO [echo.engine]   SPEAKER_00 -> Sharon (score 0.572, threshold 0.50)
+```
+
+The startup banner records the whole runtime config, and every job logs its
+duration and each speaker's **match score vs. the threshold** — so the log is
+self-diagnosing. The chatty per-request line is suppressed on purpose (the page
+polls every ~1.5s) to keep the log high-signal.
+
+**Getting help:** copy the output of `docker compose logs web` (or the last ~50
+lines around the problem) — it almost always contains the answer. Set
+`LOG_LEVEL=DEBUG` in `.env` for more detail.
+
+| Symptom | Where to look |
+|---------|---------------|
+| A file failed to transcribe | Log line `FAILED <file>: ...` (includes the whisperx error) and `failed/<name>.error.txt`. Usually a bad/empty audio file or a diarization model issue. |
+| Diarization won't run / auth error | Startup line `HF_TOKEN present: False`, or a token/terms error in the FAILED line. Fix `HF_TOKEN` in `.env` and accept the model terms on huggingface.co. |
+| "Why wasn't I recognized?" | The `SPEAKER_xx -> ... (score, threshold)` line. A match needs `score ≥ threshold` (default 0.50). Short/noisy clips score lower — enroll that person from more recordings, or lower `MATCH_THRESHOLD`. |
+| ▶ Play does nothing | The audio was deleted (by you or the 30-day retention sweep). The transcript stays, but playback needs the original in `done/`. |
+| Web UI won't load | `docker compose ps` (is `web` up?) and `docker compose logs web` for a startup error. |
+| Interrupted job after a restart | Look for `recovered N interrupted file(s) from input/` at startup — it resumes automatically. |
+
 ## Configuration (`.env`)
 
 | Key | Default | Notes |
@@ -93,6 +132,8 @@ state/    speakers.json — the voiceprint library
 | `LANGUAGE` | `en` | |
 | `MATCH_THRESHOLD` | `0.5` | Cosine similarity to auto-name a voice (validated: same person ≈0.84, different people ≤0.39). |
 | `SPEAKERS_FILE` | `speakers.json` | Container path is `/data/state/speakers.json`. |
+| `RETENTION_DAYS` | `30` | Auto-delete source **audio** older than this (transcripts kept). `0` disables. |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. |
 
 Keep `.env` to `HF_TOKEN` only unless you have a reason to override a default —
 extra vars can shadow the container paths the image sets.
