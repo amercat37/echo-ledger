@@ -92,7 +92,7 @@ def test_render_markdown_applies_names(data, config, profiles, dirs):
     md = dirs["output"] / "t.md"
     engine.render_markdown(data, md, config, profiles)
     text = md.read_text()
-    assert "**Allen**" in text and "**Sharon**" in text
+    assert "Allen:" in text and "Sharon:" in text
 
 
 def test_resolve_stem_avoids_collisions(dirs):
@@ -132,7 +132,7 @@ def test_retag_auto_clears_override(data, config, dirs, write_transcript, profil
     jf = write_transcript("m", data)
     engine.set_override(jf, dirs, config, "SPEAKER_00", "auto")
     assert "SPEAKER_00" not in json.loads(jf.read_text()).get("label_overrides", {})
-    assert "**Allen**" in (dirs["output"] / "m.md").read_text()  # match restored
+    assert "Allen:" in (dirs["output"] / "m.md").read_text()  # match restored
 
 
 def test_rename_and_delete_person_all(data, config, dirs, write_transcript, profiles):
@@ -140,10 +140,10 @@ def test_rename_and_delete_person_all(data, config, dirs, write_transcript, prof
     write_transcript("m", data)
     engine.rename_person_all(config, dirs, "Allen", "Al")
     assert "Al" in prof.load_profiles(config["speakers_file"])
-    assert "**Al**" in (dirs["output"] / "m.md").read_text()
+    assert "Al:" in (dirs["output"] / "m.md").read_text()
     engine.delete_person_all(config, dirs, "Al")
     assert "Al" not in prof.load_profiles(config["speakers_file"])
-    assert "**Al**" not in (dirs["output"] / "m.md").read_text()
+    assert "Al:" not in (dirs["output"] / "m.md").read_text()
 
 
 # ---- per-voiceprint: see / hear / delete -------------------------------------
@@ -190,7 +190,7 @@ def test_delete_sample_last_removes_person(config, dirs, write_transcript, data,
     res = engine.delete_sample(config, dirs, "Allen", 0)
     assert res["ok"] and res["removed_person"] is True and res["remaining"] == 0
     assert "Allen" not in prof.load_profiles(config["speakers_file"])
-    assert "**Allen**" not in (dirs["output"] / "m.md").read_text()  # relabeled
+    assert "Allen:" not in (dirs["output"] / "m.md").read_text()  # relabeled
 
 
 def test_delete_sample_hash_guard_blocks_wrong_target(config, dirs, profiles):
@@ -299,7 +299,7 @@ def test_apply_roster_writes_overrides_and_renders(config, dirs, write_transcrip
     assert json.loads(jf.read_text())["label_overrides"] == \
         {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}
     md = (dirs["output"] / "m.md").read_text()
-    assert "**Allen**" in md and "**Sharon**" in md   # incl. the rescued speaker
+    assert "Allen:" in md and "Sharon:" in md   # incl. the rescued speaker
 
 
 def test_apply_roster_empty_roster_is_error(config, dirs, write_transcript, profiles):

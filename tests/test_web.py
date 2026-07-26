@@ -28,7 +28,7 @@ def client(dirs, config, profiles, monkeypatch):
 def seed(dirs, data):
     """Put a viewable transcript (m.md + m.json) on disk."""
     (dirs["output"] / "m.json").write_text(json.dumps(data))
-    (dirs["output"] / "m.md").write_text("**Speaker 1** · 0:00\nhello\n")
+    (dirs["output"] / "m.md").write_text("[0:00] Speaker 1: hello\n")
     return "m"
 
 
@@ -194,6 +194,16 @@ def test_reprocess_unknown_stem_404(client):
 def test_reprocess_audio_gone_409(client, seed):
     # transcript exists (seed) but its audio was never put in done/
     assert client.post("/api/reprocess", json={"stem": seed, "num_speakers": 2}).status_code == 409
+
+
+def test_view_parses_new_line_format(client, dirs):
+    # `[time] Name: text` — one line per turn; name/text split on first ': '
+    (dirs["output"] / "v.json").write_text(json.dumps({"segments": []}))
+    (dirs["output"] / "v.md").write_text(
+        "[0:08] Allen Mercer: No, I did not ask: really.\n\n[0:31] Speaker 1: yes indeed\n")
+    html = client.get("/view/v").get_data(as_text=True)
+    assert "Allen Mercer" in html and "No, I did not ask: really." in html   # colon in text kept
+    assert "0:08" in html and "Speaker 1" in html and "yes indeed" in html
 
 
 def test_missing_stem_is_404(client):

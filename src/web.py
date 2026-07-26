@@ -520,22 +520,18 @@ def audio(stem):
 
 def _parse_transcript(md):
     """Turn our transcript markdown back into structured turns for the view page.
-    Each turn line looks like `**Name** · 0:05` followed by the spoken text."""
+    Each turn is one line: `[0:05] Name: spoken text` (name/text split on the
+    first ': ', so text may itself contain colons)."""
     turns = []
-    cur = None
     for line in md.splitlines():
-        line = line.rstrip()
-        if line.startswith("**") and "**" in line[2:]:
-            if cur:
-                turns.append(cur)
-            head = line[2:]
-            name, _, rest = head.partition("**")
-            ts = rest.replace("·", "").strip()
-            cur = {"name": name.strip(), "ts": ts, "text": ""}
-        elif line and cur is not None:
-            cur["text"] = (cur["text"] + " " + line).strip()
-    if cur:
-        turns.append(cur)
+        line = line.strip()
+        if not (line.startswith("[") and "] " in line):
+            continue
+        ts, _, rest = line[1:].partition("] ")      # "0:05", "Name: text"
+        name, sep, text = rest.partition(": ")
+        if not sep:
+            continue                                 # not a speaker line
+        turns.append({"name": name.strip(), "ts": ts.strip(), "text": text.strip()})
     return turns
 
 

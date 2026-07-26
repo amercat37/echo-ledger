@@ -92,6 +92,18 @@ Downloaded files keep the original name (`myrecording.md`). Echo Ledger never
 writes to your Obsidian vault — filing the `.md` there stays a deliberate manual
 step (so Livesync remains the vault's only writer).
 
+Transcripts are rendered one turn per line — `[time] Name: text` — with
+consecutive same-speaker segments merged, and unidentified voices numbered so
+different strangers stay distinct:
+
+```
+[0:00] Allen: Audge, can you hear me? Talk to me.
+
+[0:02] Speaker 1: Hello?
+
+[0:02] Allen: Hi, this is Allen talking.
+```
+
 ---
 
 ## Batch / command line (optional)

@@ -189,8 +189,7 @@ def write_markdown(segments, path, label_map=None):
     lines = []
     for spk, start, text in blocks:
         name = label_map.get(spk, spk or "Unknown")
-        lines.append(f"**{name}** · {ts(start)}")
-        lines.append(text)
+        lines.append(f"[{ts(start)}] {name}: {text}")
         lines.append("")
     atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 

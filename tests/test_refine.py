@@ -64,7 +64,6 @@ def test_write_markdown_merges_consecutive_turns(tmp_path):
     out = tmp_path / "t.md"
     r.write_markdown(segs, out, {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"})
     text = out.read_text()
-    assert "**Allen** · 0:00" in text
-    assert "Hello. How are you?" in text          # merged into one turn
-    assert text.count("**Allen**") == 1           # not repeated per segment
-    assert "**Sharon** · 0:05" in text
+    assert "[0:00] Allen: Hello. How are you?" in text   # merged into one turn
+    assert text.count("Allen:") == 1                      # not repeated per segment
+    assert "[0:05] Sharon: Good." in text
