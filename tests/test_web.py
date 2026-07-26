@@ -102,6 +102,15 @@ def test_roster_endpoint_assigns_closed_set(client, seed):
     assert labels == {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}
 
 
+def test_roster_open_mode_leaves_others(client, seed):
+    # roster only {Allen}; open mode names Allen and leaves Sharon's voice unassigned
+    r = client.post("/api/roster",
+                    json={"stem": seed, "people": ["Allen"], "allow_others": True}).get_json()
+    assert r["ok"] and r["allow_others"] is True
+    labels = {a["label"]: a["name"] for a in r["assignments"]}
+    assert labels == {"SPEAKER_00": "Allen"}          # SPEAKER_01 left as an "other"
+
+
 def test_roster_unknown_stem_404(client):
     assert client.post("/api/roster",
                        json={"stem": "nope", "people": ["Allen"]}).status_code == 404

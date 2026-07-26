@@ -247,6 +247,30 @@ def test_assign_roster_ignores_unknown_and_empty(config, profiles):
                                 config, ["Allen"], profiles) == []          # no speech
 
 
+def test_assign_roster_open_mode_leaves_others_unassigned(config, profiles):
+    # 3 voices; roster is only {Allen, Sharon}. The 3rd voice matches neither and,
+    # in open mode, is NOT force-assigned — it's left out entirely.
+    data = _roster_data([1.0, 0, 0, 0], [0.0, 1.0, 0, 0], [0.0, 0, 1.0, 0])
+    out = {a["label"]: a["name"] for a in
+           engine.assign_roster(data, config, ["Allen", "Sharon"], profiles, allow_others=True)}
+    assert out == {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}   # SPEAKER_02 absent
+    # closed mode WOULD force the 3rd voice onto its best roster member
+    closed = {a["label"] for a in engine.assign_roster(data, config, ["Allen", "Sharon"], profiles)}
+    assert "SPEAKER_02" in closed
+
+
+def test_apply_roster_open_mode_clears_prior_pin_on_others(config, dirs, write_transcript, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    data = _roster_data([1.0, 0, 0, 0], [0.0, 1.0, 0, 0], [0.0, 0, 1.0, 0])
+    data["label_overrides"] = {"SPEAKER_02": "Allen"}     # a stale pin from a prior solve
+    jf = write_transcript("m", data)
+    res = engine.apply_roster(jf, dirs, config, ["Allen", "Sharon"], allow_others=True)
+    assert res["ok"] and res["allow_others"] is True
+    ov = json.loads(jf.read_text())["label_overrides"]
+    assert ov.get("SPEAKER_00") == "Allen" and ov.get("SPEAKER_01") == "Sharon"
+    assert "SPEAKER_02" not in ov                          # "other" un-pinned -> auto/Speaker N
+
+
 def test_apply_roster_writes_overrides_and_renders(config, dirs, write_transcript, profiles):
     prof.save_profiles(config["speakers_file"], profiles)
     jf = write_transcript("m", _roster_data([1.0, 0, 0, 0], [0.3, 0.2, 0.9, 0.0]))

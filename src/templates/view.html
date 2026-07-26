@@ -52,22 +52,34 @@
 </div>
 <h1 style="font-size:22px; margin:6px 0 16px;">{{ stem }}</h1>
 
-<h2 style="margin-top:0;">Speakers in this recording</h2>
-<div id="speakers" class="card"><div class="empty">Loading…</div></div>
+<div id="spkSummary" class="card" style="padding:12px 16px; display:flex; align-items:center;
+     gap:10px; cursor:pointer;">
+  <span style="font-weight:600;">Speakers</span>
+  <span id="spkSummaryText" class="muted" style="font-size:13px; flex:1; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Loading…</span>
+  <span id="spkToggle" class="muted" style="font-size:13px; white-space:nowrap;">Manage ▾</span>
+</div>
 
-<div id="rosterBox" class="card" style="display:none; margin-top:12px; padding:14px 16px;">
-  <div style="font-weight:600; margin-bottom:4px;">Who's in this recording?</div>
-  <p class="muted" style="font-size:13px; margin:0 0 10px; white-space:normal;">
-    Pick the <b>exact</b> people present, then Solve. Each voice is assigned to one of
-    them — matching the whole set at once, so a hard-to-recognize voice gets named by
-    elimination once the clear ones are taken. Names them on this transcript only; fix
-    any result with the dropdowns above. (If someone <i>not</i> listed actually spoke,
-    they'll be mislabeled — leave them off and use “plus others” by not listing everyone.)
-  </p>
-  <div id="rosterPeople" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
-  <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
-    <button id="rosterGo" class="btn primary sm">Solve assignment</button>
-    <span id="rosterHint" class="muted" style="font-size:12px;"></span>
+<div id="spkPanel" style="display:none; margin-top:12px;">
+  <div id="speakers" class="card"><div class="empty">Loading…</div></div>
+
+  <div id="rosterBox" class="card" style="display:none; margin-top:12px; padding:14px 16px;">
+    <div style="font-weight:600; margin-bottom:4px;">Who's in this recording?</div>
+    <p class="muted" style="font-size:13px; margin:0 0 10px; white-space:normal;">
+      Pick the people present, then Solve — each voice is matched against the whole set at
+      once, so a hard-to-recognize voice can be named by elimination. Names them on this
+      transcript only (nothing is enrolled); fix any result with the dropdowns above.
+    </p>
+    <div id="rosterPeople" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:13px;">
+      <label style="cursor:pointer;"><input type="radio" name="rmode" value="closed" checked> Exactly these people</label>
+      <label style="cursor:pointer;"><input type="radio" name="rmode" value="open"> These, plus maybe others</label>
+    </div>
+    <div id="rmodeHelp" class="muted" style="font-size:12px; margin-top:6px; white-space:normal;"></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+      <button id="rosterGo" class="btn primary sm">Solve assignment</button>
+      <span id="rosterHint" class="muted" style="font-size:12px;"></span>
+    </div>
   </div>
 </div>
 
@@ -100,7 +112,7 @@ function parseTs(t) {
   return p.length === 3 ? p[0]*3600 + p[1]*60 + p[2] : p[0]*60 + p[1];
 }
 
-let PEOPLE = [], HAS_AUDIO = false;
+let PEOPLE = [], HAS_AUDIO = false, PRESENT = new Set();
 
 function speakerRow(sp) {
   const play = (HAS_AUDIO && sp.segment)
@@ -115,7 +127,7 @@ function speakerRow(sp) {
   const opts = [`<option value="auto"${s('auto')}>Auto (match voice)</option>`];
   PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}"${s('p:'+p.name)}>${esc(p.name)}</option>`));
   opts.push('<option value="__new__">+ Add new person…</option>');
-  opts.push(`<option value="generic"${s('generic')}>Unnamed (Speaker N)</option>`);
+  opts.push(`<option value="generic"${s('generic')}>Leave unnamed (Speaker N)</option>`);
   const scoreTxt = sp.matched_name ? ` <span class="muted" style="font-size:12px;">(${sp.score})</span>` : '';
   return `<div class="row" data-label="${esc(sp.label)}">
     <div style="min-width:0; flex:1;">
@@ -133,11 +145,27 @@ function speakerRow(sp) {
 async function loadSpeakers() {
   const d = await (await fetch('/api/transcript/' + encodeURIComponent(STEM))).json();
   PEOPLE = d.people; HAS_AUDIO = d.has_audio;
+  const speakers = d.speakers;
+  // People currently present & named -> pre-tick them in the roster.
+  PRESENT = new Set();
+  speakers.forEach(s => { if (s.matched_name) PRESENT.add(s.matched_name);
+                          if (s.override) PRESENT.add(s.override); });
   renderRoster();
+
   const box = document.querySelector('#speakers');
-  box.innerHTML = d.speakers.length
-    ? d.speakers.map(speakerRow).join('')
+  box.innerHTML = speakers.length
+    ? speakers.map(speakerRow).join('')
     : '<div class="empty">No identifiable speakers.</div>';
+
+  // Compact one-line summary for the collapsed header.
+  const named = speakers.filter(s => !/^Speaker \d+$/.test(s.display)).map(s => s.display);
+  const unnamed = speakers.length - named.length;
+  document.querySelector('#spkSummaryText').textContent = speakers.length
+    ? `${speakers.length} voice${speakers.length === 1 ? '' : 's'}`
+      + (named.length ? ` — ${named.join(', ')}` : '')
+      + (unnamed ? ` · ${unnamed} unnamed` : '')
+    : 'No identifiable speakers.';
+
   box.querySelectorAll('.retag').forEach(sel => {
     const label = sel.closest('[data-label]').dataset.label;
     sel.addEventListener('change', () => onRetag(label, sel));
@@ -175,7 +203,15 @@ async function onRetag(label, sel) {
   }
 }
 
-// --- Roster: "who's in this recording?" closed-set assignment -----------------
+// --- Speakers panel: collapse by default; reading the transcript comes first --
+const spkPanel = document.querySelector('#spkPanel');
+document.querySelector('#spkSummary').addEventListener('click', () => {
+  const open = spkPanel.style.display !== 'none';
+  spkPanel.style.display = open ? 'none' : '';
+  document.querySelector('#spkToggle').textContent = open ? 'Manage ▾' : 'Hide ▴';
+});
+
+// --- Roster: "who's in this recording?" assignment ----------------------------
 function renderRoster() {
   const box = document.querySelector('#rosterBox');
   const wrap = document.querySelector('#rosterPeople');
@@ -183,9 +219,10 @@ function renderRoster() {
   box.style.display = '';
   wrap.innerHTML = PEOPLE.map(p => {
     const n = esc(p.name);
+    const on = PRESENT.has(p.name) ? ' checked' : '';   // pre-tick who's already here
     return `<label class="chip" style="cursor:pointer; display:inline-flex; align-items:center;
       gap:6px; padding:6px 12px; font-weight:600;">
-      <input type="checkbox" value="${n}" style="margin:0;"> ${n}</label>`;
+      <input type="checkbox" value="${n}"${on} style="margin:0;"> ${n}</label>`;
   }).join('');
   wrap.querySelectorAll('input').forEach(i => i.addEventListener('change', updateRosterHint));
   updateRosterHint();
@@ -194,12 +231,22 @@ function renderRoster() {
 function checkedRoster() {
   return [...document.querySelectorAll('#rosterPeople input:checked')].map(i => i.value);
 }
-
+function rosterMode() {
+  const r = document.querySelector('input[name="rmode"]:checked');
+  return r ? r.value : 'closed';
+}
+function updateRmodeHelp() {
+  document.querySelector('#rmodeHelp').textContent = rosterMode() === 'open'
+    ? 'Only the people you tick get named; any other voices stay “Speaker N”. Safer when a stranger (e.g. a support rep) may also be on the recording.'
+    : 'Every voice is assigned to someone you ticked — use only when you’re sure no one else spoke.';
+}
 function updateRosterHint() {
   const n = checkedRoster().length;
   document.querySelector('#rosterHint').textContent =
-    n ? `Assigning each voice among exactly ${n} ${n === 1 ? 'person' : 'people'}.` : '';
+    n ? `${n} ${n === 1 ? 'person' : 'people'} selected.` : '';
 }
+document.querySelectorAll('input[name="rmode"]').forEach(r => r.addEventListener('change', updateRmodeHelp));
+updateRmodeHelp();
 
 document.querySelector('#rosterGo').addEventListener('click', async () => {
   const people = checkedRoster();
@@ -207,11 +254,12 @@ document.querySelector('#rosterGo').addEventListener('click', async () => {
   notice.textContent = 'Assigning…';
   const j = await (await fetch('/api/roster', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ stem: STEM, people })
+    body: JSON.stringify({ stem: STEM, people, allow_others: rosterMode() === 'open' })
   })).json();
   if (j.ok) {
     const summary = j.assignments.map(a => `${esc(a.name)} (${a.score})`).join(', ');
-    notice.textContent = `Assigned — ${summary}. Reloading…`;
+    const others = j.allow_others ? ' (other voices left as Speaker N)' : '';
+    notice.textContent = `Assigned — ${summary}${others}. Reloading…`;
     setTimeout(() => location.reload(), 900);
   } else {
     notice.textContent = 'Failed: ' + (j.error || 'unknown');

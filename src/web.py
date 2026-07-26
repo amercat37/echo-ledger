@@ -469,8 +469,10 @@ def api_roster():
     if not jf.is_file():
         abort(404)
     roster = [str(x) for x in (p.get("people") or [])]
-    result = engine.apply_roster(jf, DIRS, CONFIG, roster)
-    log.info("roster %s people=%r: %s", stem, roster, result)
+    result = engine.apply_roster(jf, DIRS, CONFIG, roster,
+                                 allow_others=bool(p.get("allow_others")))
+    log.info("roster %s people=%r others=%s: %s",
+             stem, roster, bool(p.get("allow_others")), result)
     return jsonify(result)
 
 
