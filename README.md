@@ -213,5 +213,29 @@ pytest                                    # ~0.3s, 77 tests
 ```
 
 They cover matching, the snippet/▶-segment alignment, per-transcript overrides,
-enroll/rename/delete, delete + retention, atomic writes, and the HTTP routes.
-`pytest` is a dev-only dependency and is not included in the Docker image.
+enroll/rename/delete, reprocess, the **roster solver** (closed + "plus others"
+modes, rescue-by-elimination), **per-voiceprint** provenance/hear/delete,
+**dismiss/restore** on the Tag page, delete + retention, atomic writes, and every
+HTTP route. `pytest` is a dev-only dependency and is not included in the Docker image.
+
+---
+
+## About this project
+
+Echo Ledger is a companion to my **memory-vault** project — the transcripts it
+produces are meant to be filed into that Obsidian vault by hand (Livesync stays
+the vault's only writer, so nothing here touches it directly).
+
+It's also an experiment. I wanted to see whether Claude (via Claude Code) could
+take an entire project from an idea to working, tested, production-ready software
+**on its own — without me writing a single line of code.** We spent roughly two
+hours talking through the design together: I made the product calls (Docker-only,
+one serial worker, the speaker-ID model, the privacy rules, how tagging should
+feel), answered questions, and course-corrected. Claude did all the rest — the
+engine, the Flask app, the diarization/matching pipeline, the Docker setup, every
+feature you see above (speaker ID, re-tagging, reprocess, the roster solver,
+per-voiceprint management, dismiss), the 77-test suite, and this documentation.
+
+Every line of code in this repo was written by Claude. I never edited one.
+
+*— Allen*
