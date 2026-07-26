@@ -95,8 +95,8 @@ function renderDone(items) {
       <span class="spacer"></span>${tag}
       <a class="btn sm" href="/view/${encodeURIComponent(it.stem)}">View</a>
       <a class="btn sm" href="/download/${encodeURIComponent(it.stem)}">Download</a>
-      <button class="btn sm ghost" style="color:var(--err);"
-        onclick="del(${JSON.stringify(it.stem)})">Delete</button></div>`;
+      <button class="btn sm ghost del" data-stem="${esc(it.stem)}"
+        style="color:var(--err);">Delete</button></div>`;
   }).join('');
 }
 
@@ -112,6 +112,9 @@ async function refresh() {
     const s = await (await fetch('/api/state')).json();
     $('#queue').innerHTML = renderQueue(s.queue);
     $('#done').innerHTML = renderDone(s.completed);
+    // Wire delete via data attribute (a filename stem in an inline onclick can
+    // contain quotes and break the attribute), and it's injection-safe.
+    $('#done').querySelectorAll('.del').forEach(b => b.onclick = () => del(b.dataset.stem));
     const btn = $('#pause');
     btn.dataset.paused = s.paused ? '1' : '0';
     btn.textContent = s.paused ? '▶ Resume' : 'Pause';

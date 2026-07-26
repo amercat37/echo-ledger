@@ -122,6 +122,17 @@ def test_retag_generic(client, seed):
     assert r.get_json()["ok"]
 
 
+def test_home_delete_button_is_wired_not_broken_inline(client):
+    # Regression: the completed-list Delete button rendered its stem with
+    # JSON.stringify inside a double-quoted inline onclick — the inner double
+    # quotes closed the HTML attribute early, so the click did nothing. It must
+    # be wired via a data attribute instead.
+    html = client.get("/").get_data(as_text=True)
+    assert "del(${JSON.stringify" not in html          # the old, broken pattern
+    assert 'data-stem="${esc(it.stem)}"' in html       # stem passed safely
+    assert "del(b.dataset.stem)" in html               # click wired in JS
+
+
 def test_delete_endpoint(client, seed, dirs):
     (dirs["done"] / "meeting.mp3").write_bytes(b"A")
     r = client.post("/api/delete", json={"stem": seed}).get_json()
