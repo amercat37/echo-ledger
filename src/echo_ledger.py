@@ -457,6 +457,79 @@ def set_override(json_path, dirs, config, label, action, name=None, profiles=Non
     return {"ok": True, "action": action}
 
 
+def assign_roster(data, config, roster, profiles=None):
+    """Closed-set speaker assignment: given the EXACT set of people present in a
+    recording, label each acoustic cluster with one of them.
+
+    Independent per-cluster matching (match_speakers) leaves borderline clusters
+    unnamed and can stamp one person onto two clusters. When you assert exactly
+    who is present we can do better: a greedy one-to-one pairing (highest-
+    confidence pair first, then remove both from the pool) turns equal counts into
+    a clean bijection — so a sub-threshold cluster gets rescued by ELIMINATION once
+    the confident ones are taken, and nobody is double-assigned. If diarization
+    over-split (more clusters than people), the leftover clusters each fall to
+    their best roster member (many-to-one collapses the split). People in the
+    roster who never clearly spoke simply go unused.
+
+    Only clusters with real speech take part. Returns a list of
+    {label, name, score} (score = cosine of that cluster to the assigned person),
+    or [] if there is nothing to assign. Writes nothing — see apply_roster."""
+    if profiles is None:
+        profiles = prof.load_profiles(config["speakers_file"])
+    segments = data.get("segments", [])
+    emb = data.get("speaker_embeddings", {})
+    clusters = [label for label in emb if sample_segment_for(segments, label)]
+    roster = [r for r in roster if r in profiles]  # ignore names we don't know
+    if not clusters or not roster:
+        return []
+
+    def sim(c, r):
+        return max((prof.cosine(emb[c], v) for v in profiles[r]), default=-1.0)
+
+    # Greedy one-to-one core: take the globally strongest (cluster, person) pair,
+    # lock it, drop both, repeat. Confident matches anchor first; the rest are
+    # settled by what's left (elimination).
+    pairs = sorted(((sim(c, r), c, r) for c in clusters for r in roster),
+                   key=lambda t: t[0], reverse=True)
+    assign = {}
+    used_c, used_r = set(), set()
+    for _score, c, r in pairs:
+        if c in used_c or r in used_r:
+            continue
+        assign[c] = r
+        used_c.add(c)
+        used_r.add(r)
+    # Leftover clusters (over-split): each to its single best roster member.
+    for c in clusters:
+        if c not in assign:
+            assign[c] = max(roster, key=lambda r: sim(c, r))
+
+    return [{"label": c, "name": assign[c], "score": round(sim(c, assign[c]), 3)}
+            for c in clusters]
+
+
+def apply_roster(json_path, dirs, config, roster, profiles=None):
+    """Solve closed-set assignment for one transcript (assign_roster) and pin the
+    result as per-transcript overrides, then re-render. This does NOT enroll — it
+    only forces the labels on THIS transcript, so it can't pollute the profile
+    store with a rescued-by-elimination voiceprint. Undo any speaker with the
+    per-speaker "Auto" re-tag (which clears its override). Returns
+    {ok, assignments} or {ok: False, error}."""
+    json_path = Path(json_path)
+    data = json.loads(json_path.read_text())
+    assignments = assign_roster(data, config, roster, profiles)
+    if not assignments:
+        return {"ok": False, "error": "no speakers to assign, or none of the "
+                "chosen people are enrolled"}
+    overrides = data.setdefault("label_overrides", {})
+    for a in assignments:
+        overrides[a["label"]] = a["name"]  # a real name wins over auto-match
+    refine_speakers.atomic_write_text(json_path, json.dumps(data, indent=2))
+    md = dirs["output"] / f"{json_path.stem}.md"
+    render_markdown(data, md, config, profiles)
+    return {"ok": True, "assignments": assignments}
+
+
 def rename_person_all(config, dirs, old, new):
     """Rename an enrolled person everywhere, then relabel all transcripts."""
     profiles = prof.load_profiles(config["speakers_file"])

@@ -457,6 +457,23 @@ def api_retag():
     return jsonify(result)
 
 
+@app.route("/api/roster", methods=["POST"])
+def api_roster():
+    """Closed-set assign: given the EXACT people present in one transcript, pin each
+    speaker to one of them (one-to-one, rescuing borderline clusters by
+    elimination). Body: {stem, people: ["Allen", "Sharon"]}. Pure re-label — no
+    re-transcription, no enrollment."""
+    p = request.get_json(force=True)
+    stem = Path(p.get("stem", "")).name
+    jf = DIRS["output"] / f"{stem}.json"
+    if not jf.is_file():
+        abort(404)
+    roster = [str(x) for x in (p.get("people") or [])]
+    result = engine.apply_roster(jf, DIRS, CONFIG, roster)
+    log.info("roster %s people=%r: %s", stem, roster, result)
+    return jsonify(result)
+
+
 def _source_audio_path(stem):
     """Absolute path to a transcript's source audio (for ▶ play), or None if gone."""
     ap = engine.source_audio_path(stem, DIRS)

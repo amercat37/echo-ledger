@@ -57,7 +57,16 @@ Three pages:
   keeping the rest. Deleting a person's last voiceprint removes the person. Every
   edit re-labels all transcripts automatically.
 
-Open a transcript (**View**) and you also get **Copy** (transcript markdown to the
+Open a transcript (**View**) to see the speakers with per-speaker re-tag dropdowns,
+plus a **Who's in this recording?** solver: tick the *exact* people present and Solve,
+and each voice is matched against the whole set at once. Because it's a closed set, a
+voice too faint to auto-recognize on its own gets named **by elimination** once the
+clear ones are taken — and no one is labelled onto two speakers. It only names people
+on this transcript (no re-transcription, nothing enrolled); correct any result with the
+dropdowns. If someone *not* listed actually spoke, leave everyone off that you're unsure
+about — an unlisted voice would be force-mislabelled.
+
+You also get **Copy** (transcript markdown to the
 clipboard) and **Reprocess**. Reprocess re-runs transcription on the *original audio*
 with an optional **number-of-speakers** hint — use it when the diarizer got the speaker
 split wrong (two people merged into one, or one person split in two). Leave the count
@@ -187,7 +196,7 @@ real `speakers.json` or transcripts.
 
 ```bash
 uv pip install -r requirements-dev.txt   # or: pip install -r requirements-dev.txt
-pytest                                    # ~0.3s, 62 tests
+pytest                                    # ~0.3s, 70 tests
 ```
 
 They cover matching, the snippet/▶-segment alignment, per-transcript overrides,

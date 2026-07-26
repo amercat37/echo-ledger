@@ -195,6 +195,75 @@ def test_delete_sample_bad_index_and_unknown_person(config, dirs, profiles):
     assert engine.delete_sample(config, dirs, "Ghost", 0)["error"] == "no such person"
 
 
+# ---- roster: closed-set "exactly these people" assignment -------------------
+
+def _roster_data(emb00, emb01, *extra):
+    """A transcript with speech for SPEAKER_00/01 (+ optional extras) and the given
+    embeddings, for exercising closed-set assignment."""
+    labels = ["SPEAKER_00", "SPEAKER_01"] + [f"SPEAKER_0{i+2}" for i in range(len(extra))]
+    embs = [emb00, emb01, *extra]
+    segments = [
+        {"speaker": lbl, "start": i * 4.0, "end": i * 4.0 + 4.0, "text": f"line {i} words here",
+         "words": [{"speaker": lbl, "start": i * 4.0, "end": i * 4.0 + 4.0, "word": "line"}]}
+        for i, lbl in enumerate(labels)
+    ]
+    return {"segments": segments,
+            "speaker_embeddings": {lbl: e for lbl, e in zip(labels, embs)}}
+
+
+def test_assign_roster_rescues_by_elimination(config, profiles):
+    # SPEAKER_00 is clearly Allen; SPEAKER_01 matches NOBODY above 0.5 (best is Allen
+    # ~0.31), but with Allen taken it is assigned Sharon by elimination.
+    data = _roster_data([1.0, 0, 0, 0], [0.3, 0.2, 0.9, 0.0])
+    out = {a["label"]: a["name"]
+           for a in engine.assign_roster(data, config, ["Allen", "Sharon"], profiles)}
+    assert out == {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}
+    # match_speakers alone would leave SPEAKER_01 unnamed (below threshold)
+    nm, _ = engine.match_speakers(data, config, profiles)
+    assert "SPEAKER_01" not in nm
+
+
+def test_assign_roster_no_double_assignment(config, profiles):
+    # Both clusters look most like Allen; a closed set forces one to be Sharon.
+    data = _roster_data([1.0, 0, 0, 0], [0.9, 0.1, 0, 0])
+    names = [a["name"] for a in engine.assign_roster(data, config, ["Allen", "Sharon"], profiles)]
+    assert sorted(names) == ["Allen", "Sharon"]
+
+
+def test_assign_roster_oversplit_collapses_to_best(config, profiles):
+    # 3 clusters, 2 people: the leftover cluster goes to its best roster member.
+    data = _roster_data([1.0, 0, 0, 0], [0.0, 1.0, 0, 0], [0.95, 0.05, 0, 0])
+    out = {a["label"]: a["name"]
+           for a in engine.assign_roster(data, config, ["Allen", "Sharon"], profiles)}
+    assert out["SPEAKER_00"] == "Allen" and out["SPEAKER_01"] == "Sharon"
+    assert out["SPEAKER_02"] == "Allen"          # over-split cluster collapses to Allen
+
+
+def test_assign_roster_ignores_unknown_and_empty(config, profiles):
+    data = _roster_data([1.0, 0, 0, 0], [0.0, 1.0, 0, 0])
+    assert engine.assign_roster(data, config, ["Ghost"], profiles) == []   # unknown name
+    assert engine.assign_roster(data, config, [], profiles) == []          # empty roster
+    assert engine.assign_roster({"segments": [], "speaker_embeddings": {}},
+                                config, ["Allen"], profiles) == []          # no speech
+
+
+def test_apply_roster_writes_overrides_and_renders(config, dirs, write_transcript, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    jf = write_transcript("m", _roster_data([1.0, 0, 0, 0], [0.3, 0.2, 0.9, 0.0]))
+    res = engine.apply_roster(jf, dirs, config, ["Allen", "Sharon"])
+    assert res["ok"]
+    assert json.loads(jf.read_text())["label_overrides"] == \
+        {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}
+    md = (dirs["output"] / "m.md").read_text()
+    assert "**Allen**" in md and "**Sharon**" in md   # incl. the rescued speaker
+
+
+def test_apply_roster_empty_roster_is_error(config, dirs, write_transcript, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    jf = write_transcript("m", _roster_data([1.0, 0, 0, 0], [0.0, 1.0, 0, 0]))
+    assert engine.apply_roster(jf, dirs, config, ["Ghost"])["ok"] is False
+
+
 # ---- delete + retention ------------------------------------------------------
 
 def test_source_audio_path_prefers_recorded_then_falls_back(dirs, write_transcript, data):

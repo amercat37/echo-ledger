@@ -94,6 +94,19 @@ def test_transcript_speakers_endpoint(client, seed):
         assert sp["snippet"] and sp["segment"]
 
 
+def test_roster_endpoint_assigns_closed_set(client, seed):
+    r = client.post("/api/roster",
+                    json={"stem": seed, "people": ["Allen", "Sharon"]}).get_json()
+    assert r["ok"]
+    labels = {a["label"]: a["name"] for a in r["assignments"]}
+    assert labels == {"SPEAKER_00": "Allen", "SPEAKER_01": "Sharon"}
+
+
+def test_roster_unknown_stem_404(client):
+    assert client.post("/api/roster",
+                       json={"stem": "nope", "people": ["Allen"]}).status_code == 404
+
+
 def test_retag_generic(client, seed):
     r = client.post("/api/retag",
                     json={"stem": seed, "label": "SPEAKER_00", "action": "generic"})

@@ -54,6 +54,23 @@
 
 <h2 style="margin-top:0;">Speakers in this recording</h2>
 <div id="speakers" class="card"><div class="empty">Loading…</div></div>
+
+<div id="rosterBox" class="card" style="display:none; margin-top:12px; padding:14px 16px;">
+  <div style="font-weight:600; margin-bottom:4px;">Who's in this recording?</div>
+  <p class="muted" style="font-size:13px; margin:0 0 10px; white-space:normal;">
+    Pick the <b>exact</b> people present, then Solve. Each voice is assigned to one of
+    them — matching the whole set at once, so a hard-to-recognize voice gets named by
+    elimination once the clear ones are taken. Names them on this transcript only; fix
+    any result with the dropdowns above. (If someone <i>not</i> listed actually spoke,
+    they'll be mislabeled — leave them off and use “plus others” by not listing everyone.)
+  </p>
+  <div id="rosterPeople" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+  <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+    <button id="rosterGo" class="btn primary sm">Solve assignment</button>
+    <span id="rosterHint" class="muted" style="font-size:12px;"></span>
+  </div>
+</div>
+
 <div id="notice" class="muted" style="margin:10px 2px 0; min-height:18px;"></div>
 
 <h2>Transcript</h2>
@@ -116,6 +133,7 @@ function speakerRow(sp) {
 async function loadSpeakers() {
   const d = await (await fetch('/api/transcript/' + encodeURIComponent(STEM))).json();
   PEOPLE = d.people; HAS_AUDIO = d.has_audio;
+  renderRoster();
   const box = document.querySelector('#speakers');
   box.innerHTML = d.speakers.length
     ? d.speakers.map(speakerRow).join('')
@@ -156,6 +174,49 @@ async function onRetag(label, sel) {
     notice.textContent = 'Failed: ' + (j.error || 'unknown');
   }
 }
+
+// --- Roster: "who's in this recording?" closed-set assignment -----------------
+function renderRoster() {
+  const box = document.querySelector('#rosterBox');
+  const wrap = document.querySelector('#rosterPeople');
+  if (!PEOPLE.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  wrap.innerHTML = PEOPLE.map(p => {
+    const n = esc(p.name);
+    return `<label class="chip" style="cursor:pointer; display:inline-flex; align-items:center;
+      gap:6px; padding:6px 12px; font-weight:600;">
+      <input type="checkbox" value="${n}" style="margin:0;"> ${n}</label>`;
+  }).join('');
+  wrap.querySelectorAll('input').forEach(i => i.addEventListener('change', updateRosterHint));
+  updateRosterHint();
+}
+
+function checkedRoster() {
+  return [...document.querySelectorAll('#rosterPeople input:checked')].map(i => i.value);
+}
+
+function updateRosterHint() {
+  const n = checkedRoster().length;
+  document.querySelector('#rosterHint').textContent =
+    n ? `Assigning each voice among exactly ${n} ${n === 1 ? 'person' : 'people'}.` : '';
+}
+
+document.querySelector('#rosterGo').addEventListener('click', async () => {
+  const people = checkedRoster();
+  if (!people.length) { document.querySelector('#rosterHint').textContent = 'Pick at least one person first.'; return; }
+  notice.textContent = 'Assigning…';
+  const j = await (await fetch('/api/roster', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ stem: STEM, people })
+  })).json();
+  if (j.ok) {
+    const summary = j.assignments.map(a => `${esc(a.name)} (${a.score})`).join(', ');
+    notice.textContent = `Assigned — ${summary}. Reloading…`;
+    setTimeout(() => location.reload(), 900);
+  } else {
+    notice.textContent = 'Failed: ' + (j.error || 'unknown');
+  }
+});
 
 // Copy the transcript markdown (what you'd paste into Obsidian) to the clipboard.
 document.querySelector('#copyBtn').addEventListener('click', async () => {
