@@ -284,23 +284,47 @@ def tag():
 @app.route("/api/tags")
 def api_tags():
     """Every transcript that still has unknown speakers with real speech, enriched
-    with a ▶ play segment per speaker, plus the shared people dropdown."""
+    with a ▶ play segment per speaker, plus the shared people dropdown. Dismissed
+    speakers ("not a person") are hidden unless ?show_dismissed=1; dismissed_total
+    lets the page offer to reveal them."""
+    show = request.args.get("show_dismissed") in ("1", "true")
     profiles = engine.prof.load_profiles(CONFIG["speakers_file"])
     out = []
+    dismissed_total = 0
     for jf in sorted(DIRS["output"].glob("*.json"),
                      key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             data = json.loads(jf.read_text())
         except Exception:
             continue
-        unknown = engine.list_unidentified(data, CONFIG, profiles)
+        # Ask for everything (incl. dismissed) so we can count them, then hide the
+        # dismissed ones unless the page requested to see them.
+        unknown = engine.list_unidentified(data, CONFIG, profiles, include_ignored=True)
+        dismissed_total += sum(1 for s in unknown if s["ignored"])
+        if not show:
+            unknown = [s for s in unknown if not s["ignored"]]
         if not unknown:
             continue
-        # list_unidentified already carries each speaker's snippet + matching
-        # ▶ segment (same clip), so nothing extra to attach here.
         out.append({"stem": jf.stem, "speakers": unknown,
                     "has_audio": _source_audio_path(jf.stem) is not None})
-    return jsonify({"transcripts": out, "people": engine.all_people(CONFIG)})
+    return jsonify({"transcripts": out, "people": engine.all_people(CONFIG),
+                    "dismissed_total": dismissed_total, "show_dismissed": show})
+
+
+@app.route("/api/ignore", methods=["POST"])
+def api_ignore():
+    """Dismiss or restore one speaker on one transcript. Body:
+    {stem, label, ignored}. Non-destructive — only toggles a flag."""
+    p = request.get_json(force=True)
+    stem = Path(p.get("stem", "")).name
+    jf = DIRS["output"] / f"{stem}.json"
+    if not jf.is_file():
+        abort(404)
+    result = engine.set_ignored(jf, CONFIG, p.get("label", ""),
+                                bool(p.get("ignored", True)))
+    log.info("ignore %s label=%s ignored=%s: %s", stem, p.get("label"),
+             p.get("ignored", True), result)
+    return jsonify(result)
 
 
 @app.route("/api/enroll", methods=["POST"])

@@ -317,26 +317,59 @@ def sample_segment_for(segments, label, min_dur=3.0):
     return max(with_speech, key=lambda s: s["end"] - s["start"])
 
 
-def list_unidentified(data, config, profiles=None):
+def list_unidentified(data, config, profiles=None, include_ignored=False):
     """Speakers in one transcript that did NOT match a profile but have real
     speech — the candidates a human can name. Each dict carries the SAME segment
-    for its snippet text and its ▶ play range:
-      {"label", "snippet", "score", "segment": {"start", "end"}}."""
+    for its snippet text and its ▶ play range, plus its dismissed state:
+      {"label", "snippet", "score", "segment": {"start", "end"}, "ignored"}.
+
+    Dismissed speakers (labels in data["ignored"] — voices marked "not a person",
+    e.g. an IVR or a one-off caller) are skipped so they stop nagging the Tag page,
+    UNLESS include_ignored is set (the "show dismissed" view, for restoring them).
+    Dismiss deletes nothing — it is only this flag — so it is fully reversible."""
     if profiles is None:
         profiles = prof.load_profiles(config["speakers_file"])
     segments = data.get("segments", [])
     emb = data.get("speaker_embeddings", {})
+    ignored = set(data.get("ignored", []))
     out = []
     for label, vec in emb.items():
         name, score = prof.best_match(vec, profiles, config["threshold"])
         if name:
             continue  # already identified
+        if label in ignored and not include_ignored:
+            continue  # dismissed — don't nag
         seg = sample_segment_for(segments, label)
         if not seg:
             continue  # no speech (automated attendant / empty cluster) — skip
         out.append({"label": label, "snippet": seg["text"], "score": round(score, 3),
-                    "segment": {"start": seg["start"], "end": seg["end"]}})
+                    "segment": {"start": seg["start"], "end": seg["end"]},
+                    "ignored": label in ignored})
     return out
+
+
+def set_ignored(json_path, config, label, ignored=True):
+    """Dismiss (or restore) one speaker — "not a person, stop asking" — so the Tag
+    page skips it. NON-DESTRUCTIVE and reversible: it only edits data["ignored"]
+    (a list of labels); the voiceprint, audio and text are all kept, so restoring
+    is just dropping the label. No re-render needed (dismiss doesn't change the
+    markdown, only the Tag queue). Returns {ok, label, ignored}."""
+    label = (label or "").strip()
+    if not label:
+        return {"ok": False, "error": "no speaker given"}
+    json_path = Path(json_path)
+    data = json.loads(json_path.read_text())
+    lst = data.get("ignored", [])
+    if ignored and label not in lst:
+        lst.append(label)
+    elif not ignored and label in lst:
+        lst.remove(label)
+    if lst:
+        data["ignored"] = lst
+    else:
+        data.pop("ignored", None)  # keep the JSON tidy
+    refine_speakers.atomic_write_text(json_path, json.dumps(data, indent=2))
+    return {"ok": True, "label": label, "ignored": ignored}
 
 
 def enroll_headless(data, names_by_label, config, profiles=None, save=True):
@@ -395,6 +428,7 @@ def transcript_speakers(data, config, profiles=None):
     segments = data.get("segments", [])
     emb = data.get("speaker_embeddings", {})
     overrides = data.get("label_overrides", {})
+    ignored = set(data.get("ignored", []))
     name_map, _ = match_speakers(data, config, profiles)
     display = refine_speakers.display_labels(segments, apply_overrides(dict(name_map), data))
     out = []
@@ -415,6 +449,7 @@ def transcript_speakers(data, config, profiles=None):
             "score": round(score, 3),
             "snippet": sample["text"],
             "override": overrides.get(label),  # None=auto, ""=forced generic, else name
+            "ignored": label in ignored,       # dismissed as "not a person"
             "segment": {"start": sample["start"], "end": sample["end"]},
         })
     return out

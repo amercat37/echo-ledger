@@ -5,8 +5,17 @@
 <p class="muted" style="margin-top:0;">
   Name an unknown voice once — Echo Ledger remembers it and auto-names that person in
   every past and future transcript. Hit ▶ to hear who it is. Pick an existing person to
-  keep names consistent, or add someone new. Leave a speaker on “Skip” to ignore it.
+  keep names consistent, or add someone new. Leave a speaker on “Skip” to handle it later,
+  or <b>Dismiss</b> a voice that's not a person (an auto-attendant, a one-off caller) so it
+  stops showing up here — you can always restore it.
 </p>
+
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+  <span class="spacer" style="margin-left:auto;"></span>
+  <label id="showDismWrap" class="muted" style="font-size:13px; cursor:pointer; display:none;">
+    <input type="checkbox" id="showDism"> Show dismissed (<span id="dismCount">0</span>)
+  </label>
+</div>
 
 <div id="list"><div class="card"><div class="empty">Loading…</div></div></div>
 <div id="notice" class="muted" style="margin-top:12px; min-height:20px;"></div>
@@ -21,50 +30,82 @@ function nameControl(label) {
   PEOPLE.forEach(p => opts.push(`<option value="p:${esc(p.name)}">${esc(p.name)}</option>`));
   opts.push('<option value="__new__">+ Add new person…</option>');
   return `<select class="pick" style="padding:8px 10px; border:1px solid var(--line);
-      border-radius:8px; background:var(--bg); color:var(--ink); font-size:14px; width:170px;">
+      border-radius:8px; background:var(--bg); color:var(--ink); font-size:14px; width:150px;">
       ${opts.join('')}</select>
     <input class="newname" placeholder="new name…" style="display:none; margin-left:8px;
       padding:8px 10px; border:1px solid var(--line); border-radius:8px;
-      background:var(--bg); color:var(--ink); font-size:14px; width:150px;">`;
+      background:var(--bg); color:var(--ink); font-size:14px; width:140px;">`;
 }
 
 function speakerRow(sp, stem, hasAudio) {
   const play = (hasAudio && sp.segment)
     ? `<button class="btn sm ghost" onclick='EL.play(${JSON.stringify(stem)}, ${sp.segment.start}, ${sp.segment.end}, this)'>▶</button>`
     : '';
-  return `<div class="row" data-label="${esc(sp.label)}">
-    <div style="min-width:0; flex:1;">
-      <div class="name">${esc(sp.label)}</div>
+  const head = `<div style="min-width:0; flex:1;">
+      <div class="name">${esc(sp.label)}${sp.ignored ? ' <span class="chip">dismissed</span>' : ''}</div>
       <div class="muted" style="font-size:13px; white-space:normal;">“${esc(sp.snippet)}”</div>
-    </div>
-    ${play}${nameControl(sp.label)}
+    </div>`;
+  if (sp.ignored) {
+    return `<div class="row" data-label="${esc(sp.label)}" style="opacity:.75;">
+      ${head}${play}
+      <button class="btn sm ghost restore" style="margin-left:8px;">Restore</button>
+    </div>`;
+  }
+  return `<div class="row" data-label="${esc(sp.label)}">
+    ${head}${play}${nameControl(sp.label)}
+    <button class="btn sm ghost dismiss" title="Not a person — stop asking about this voice"
+      style="margin-left:8px; color:var(--muted);">Dismiss</button>
   </div>`;
 }
 
-function card(t) {
+function card(t, expanded) {
+  const toTag = t.speakers.filter(s => !s.ignored).length;
+  const dism = t.speakers.length - toTag;
+  const chips = `<span class="chip warn">${toTag} to tag</span>`
+    + (dism ? ` <span class="chip">${dism} dismissed</span>` : '');
+  const body = t.speakers.map(sp => speakerRow(sp, t.stem, t.has_audio)).join('')
+    + (toTag ? `<div class="row" style="justify-content:flex-end;">
+        <button class="btn primary sm save">Save &amp; re-label all</button></div>` : '');
   return `<div class="card" data-stem="${esc(t.stem)}" style="margin-bottom:18px;">
-      <div class="row" style="background:var(--chip);">
+      <div class="row hdr" style="background:var(--chip); cursor:pointer;">
+        <span class="chev" style="width:14px; display:inline-block;">${expanded ? '▾' : '▸'}</span>
         <div class="name">${esc(t.stem)}</div>
         <span class="spacer" style="margin-left:auto;"></span>
-        <span class="chip warn">${t.speakers.length} unknown</span>
-        <a class="btn sm ghost" href="/view/${encodeURIComponent(t.stem)}">Open</a>
+        ${chips}
+        <a class="btn sm ghost open" href="/view/${encodeURIComponent(t.stem)}">Open</a>
       </div>
-      ${t.speakers.map(sp => speakerRow(sp, t.stem, t.has_audio)).join('')}
-      <div class="row" style="justify-content:flex-end;">
-        <button class="btn primary sm save">Save &amp; re-label all</button>
-      </div>
+      <div class="body" style="display:${expanded ? '' : 'none'};">${body}</div>
     </div>`;
 }
 
 async function load() {
-  const data = await (await fetch('/api/tags')).json();
+  const showDism = document.querySelector('#showDism').checked;
+  const data = await (await fetch('/api/tags' + (showDism ? '?show_dismissed=1' : ''))).json();
   PEOPLE = data.people || [];
+
+  // "Show dismissed (N)" toggle — only offered when there are any dismissed voices.
+  const wrap = document.querySelector('#showDismWrap');
+  document.querySelector('#dismCount').textContent = data.dismissed_total;
+  wrap.style.display = (data.dismissed_total || showDism) ? '' : 'none';
+
   const list = document.querySelector('#list');
   if (!data.transcripts.length) {
-    list.innerHTML = '<div class="card"><div class="empty">🎉 No unknown speakers — every transcript is fully named.</div></div>';
+    list.innerHTML = `<div class="card"><div class="empty">${showDism
+      ? 'No dismissed speakers.' : '🎉 No unknown speakers — every transcript is fully named.'}</div></div>`;
     return;
   }
-  list.innerHTML = data.transcripts.map(card).join('');
+  // Auto-expand when there's little to do; collapse once it grows.
+  const totalToTag = data.transcripts.reduce((a, t) => a + t.speakers.filter(s => !s.ignored).length, 0);
+  const autoExpand = data.transcripts.length <= 1 || totalToTag <= 3;
+  list.innerHTML = data.transcripts.map(t => card(t, autoExpand)).join('');
+
+  list.querySelectorAll('.hdr').forEach(h => h.addEventListener('click', e => {
+    if (e.target.closest('.open')) return;                 // let the Open link through
+    const body = h.parentElement.querySelector('.body');
+    const showing = body.style.display !== 'none';
+    body.style.display = showing ? 'none' : '';
+    h.querySelector('.chev').textContent = showing ? '▸' : '▾';
+  }));
   list.querySelectorAll('.pick').forEach(sel => sel.addEventListener('change', () => {
     const nn = sel.parentElement.querySelector('.newname');
     const isNew = sel.value === '__new__';
@@ -73,29 +114,49 @@ async function load() {
   }));
   list.querySelectorAll('.save').forEach(btn =>
     btn.addEventListener('click', () => save(btn.closest('[data-stem]'))));
+  list.querySelectorAll('.dismiss').forEach(btn =>
+    btn.addEventListener('click', () => setIgnored(btn, true)));
+  list.querySelectorAll('.restore').forEach(btn =>
+    btn.addEventListener('click', () => setIgnored(btn, false)));
+}
+
+async function setIgnored(btn, ignored) {
+  const stem = btn.closest('[data-stem]').dataset.stem;
+  const label = btn.closest('[data-label]').dataset.label;
+  notice.textContent = ignored ? 'Dismissing…' : 'Restoring…';
+  const j = await post('/api/ignore', { stem, label, ignored });
+  notice.textContent = j.ok
+    ? (ignored ? `Dismissed ${label} — it won't show here anymore (restore anytime).`
+               : `Restored ${label}.`)
+    : 'Failed: ' + (j.error || 'unknown');
+  load();
 }
 
 async function save(cardEl) {
   const stem = cardEl.dataset.stem;
   const names = {};
   cardEl.querySelectorAll('.row[data-label]').forEach(r => {
-    const label = r.dataset.label, sel = r.querySelector('.pick');
+    const sel = r.querySelector('.pick');
+    if (!sel) return;                                      // dismissed row — no picker
     let v = sel.value;
     if (v === '__new__') v = 'p:' + r.querySelector('.newname').value.trim();
-    if (v.startsWith('p:') && v.length > 2) names[label] = v.slice(2);
+    if (v.startsWith('p:') && v.length > 2) names[r.dataset.label] = v.slice(2);
   });
   if (!Object.keys(names).length) { notice.textContent = 'Pick a name for at least one speaker first.'; return; }
   notice.textContent = 'Enrolling and re-labeling…';
-  const j = await (await fetch('/api/enroll', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ stem, names })
-  })).json();
+  const j = await post('/api/enroll', { stem, names });
   notice.textContent = j.ok
     ? `Enrolled ${j.added.join(', ')}. Re-scanned ${j.scanned} transcript(s), ${j.named} now named.`
     : 'Nothing enrolled.';
   load();
 }
 
+async function post(url, body) {
+  return (await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body) })).json();
+}
+
+document.querySelector('#showDism').addEventListener('change', load);
 load();
 </script>
 {% endblock %}

@@ -48,7 +48,12 @@ Three pages:
 - **Tag speakers** — any transcript with unknown voices (`Speaker 1`, `Speaker 2`…)
   shows a short speech snippet per unknown speaker with a name box. Name one and
   save: the voiceprint is stored and **every past transcript is re-labeled**
-  automatically. No re-transcription — labeling is instant.
+  automatically. No re-transcription — labeling is instant. Transcripts are
+  **collapsed** to a header (name + how many still need tagging) and expand on click
+  (auto-expanded when there's little to do). A voice that isn't a person — an
+  auto-attendant, a one-off caller — can be **Dismissed** so it stops nagging you;
+  dismiss is a reversible flag (nothing is deleted), and **Show dismissed** brings
+  them back to restore.
 - **People** — everyone the system has learned. **Rename** someone (updates every
   transcript) or **delete** them entirely. Expand **Voiceprints** to see the
   individual voice samples that make up a person: each shows which recording it came
@@ -204,7 +209,7 @@ real `speakers.json` or transcripts.
 
 ```bash
 uv pip install -r requirements-dev.txt   # or: pip install -r requirements-dev.txt
-pytest                                    # ~0.3s, 73 tests
+pytest                                    # ~0.3s, 77 tests
 ```
 
 They cover matching, the snippet/▶-segment alignment, per-transcript overrides,

@@ -57,6 +57,26 @@ def test_list_unidentified_empty_when_all_matched(data, config, profiles):
     assert engine.list_unidentified(data, config, profiles) == []
 
 
+def test_list_unidentified_skips_dismissed(data, config):
+    data["ignored"] = ["SPEAKER_00"]                 # no profiles -> both unknown
+    shown = {sp["label"] for sp in engine.list_unidentified(data, config, {})}
+    assert shown == {"SPEAKER_01"}                    # dismissed one hidden by default
+    # include_ignored brings it back, flagged
+    full = {sp["label"]: sp for sp in engine.list_unidentified(data, config, {}, include_ignored=True)}
+    assert set(full) == {"SPEAKER_00", "SPEAKER_01"}
+    assert full["SPEAKER_00"]["ignored"] is True and full["SPEAKER_01"]["ignored"] is False
+
+
+def test_set_ignored_toggles_and_is_reversible(data, config, dirs, write_transcript):
+    jf = write_transcript("m", data)
+    engine.set_ignored(jf, config, "SPEAKER_00", True)
+    assert json.loads(jf.read_text())["ignored"] == ["SPEAKER_00"]
+    # restoring removes it (and drops the now-empty key)
+    engine.set_ignored(jf, config, "SPEAKER_00", False)
+    assert "ignored" not in json.loads(jf.read_text())
+    assert engine.set_ignored(jf, config, "", True)["ok"] is False   # no label
+
+
 def test_transcript_speakers_snippet_matches_segment(data, config, profiles):
     for sp in engine.transcript_speakers(data, config, profiles):
         seg_text = next(seg["text"] for seg in data["segments"]

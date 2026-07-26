@@ -139,6 +139,35 @@ def test_tags_lists_unknown_speakers(client, dirs, data):
     assert "u" in stems
 
 
+def test_dismiss_hides_from_tag_and_restores(client, dirs, data):
+    prof.save_profiles(web.CONFIG["speakers_file"], {})       # everyone unknown
+    (dirs["output"] / "u.json").write_text(json.dumps(data))
+    (dirs["output"] / "u.md").write_text("x")
+
+    r = client.post("/api/ignore", json={"stem": "u", "label": "SPEAKER_00", "ignored": True}).get_json()
+    assert r["ok"] and r["ignored"] is True
+
+    body = client.get("/api/tags").get_json()                 # default: dismissed hidden
+    u = next(t for t in body["transcripts"] if t["stem"] == "u")
+    assert {s["label"] for s in u["speakers"]} == {"SPEAKER_01"}
+    assert body["dismissed_total"] == 1
+
+    shown = client.get("/api/tags?show_dismissed=1").get_json()   # revealed + flagged
+    u2 = next(t for t in shown["transcripts"] if t["stem"] == "u")
+    s00 = next(s for s in u2["speakers"] if s["label"] == "SPEAKER_00")
+    assert s00["ignored"] is True
+
+    client.post("/api/ignore", json={"stem": "u", "label": "SPEAKER_00", "ignored": False})
+    back = client.get("/api/tags").get_json()                 # restored -> back in queue
+    u3 = next(t for t in back["transcripts"] if t["stem"] == "u")
+    assert "SPEAKER_00" in {s["label"] for s in u3["speakers"]}
+
+
+def test_ignore_unknown_stem_404(client):
+    assert client.post("/api/ignore",
+                       json={"stem": "nope", "label": "SPEAKER_00"}).status_code == 404
+
+
 def test_reprocess_enqueues_with_exact_count(client, seed, dirs):
     (dirs["done"] / "meeting.mp3").write_bytes(b"A")   # source audio present
     r = client.post("/api/reprocess", json={"stem": seed, "num_speakers": 2}).get_json()
