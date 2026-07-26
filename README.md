@@ -220,6 +220,21 @@ HTTP route. `pytest` is a dev-only dependency and is not included in the Docker 
 
 ---
 
+## Possible future enhancements
+
+The tool is complete for its purpose; this is noted only for later, and isn't needed:
+
+- **Fold the roster into Reprocess.** Today the **Who's in this recording?** solver only
+  re-labels an existing transcript, while **Reprocess** (which actually re-splits the
+  audio) takes a plain speaker *count*. These could merge — pick the people in the
+  Reprocess modal and the count follows from them: *"just these names"* = exactly N
+  speakers, *"these names plus others"* = at least N (name the ones listed, leave the
+  rest as `Speaker N`). It only really pays off in a narrow case — diarization merged
+  two people you know *and* their voices are actually separable — and is a minor
+  convenience otherwise, so it's deliberately left out for now.
+
+---
+
 ## About this project
 
 Echo Ledger is a companion to my **memory-vault** project — the transcripts it
