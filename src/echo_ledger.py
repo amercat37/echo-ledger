@@ -17,6 +17,7 @@ Transcription runs WhisperX (turbo, diarization + speaker embeddings); matching
 is cosine similarity against speakers.json. Config comes from env (see env.sample).
 The per-file unit is `process_file()` so a future watcher / web button reuses it.
 """
+import hashlib
 import json
 import logging
 import os
@@ -475,6 +476,102 @@ def delete_person_all(config, dirs, name):
     prof.save_profiles(config["speakers_file"], profiles)
     scanned, _ = relabel_all(config, dirs, profiles)
     return {"ok": True, "name": name, "scanned": scanned}
+
+
+# ---------------------------------------------------------------- voiceprints
+
+# A back-matched voiceprint at or above this cosine IS its source. Enrollment
+# copies a transcript's file-level embedding verbatim into speakers.json, so the
+# origin scores ~1.0 while any other speaker scores <=0.39 — the gap is enormous.
+ORIGIN_MATCH = 0.9999
+
+
+def _vec_hash(vec):
+    """A short, stable fingerprint of one voiceprint. Sent to the client with each
+    sample and echoed back on delete, so a stale page can't remove the WRONG
+    voiceprint after another delete shifted the list indices."""
+    blob = json.dumps(vec, separators=(",", ":")).encode()
+    return hashlib.sha1(blob).hexdigest()[:12]
+
+
+def _find_origin(vec, transcripts):
+    """Best (stem, data, label) whose embedding matches `vec`, plus the score.
+    `transcripts` is a pre-built list of (stem, data) so the scan is done once."""
+    best, best_score = None, -1.0
+    for stem, data in transcripts:
+        for label, emb in data.get("speaker_embeddings", {}).items():
+            s = prof.cosine(vec, emb)
+            if s > best_score:
+                best_score, best = s, (stem, data, label)
+    return best, best_score
+
+
+def person_samples(config, dirs, name, profiles=None):
+    """List a person's individual voiceprints with reconstructed provenance — the
+    data behind "see and hear each voiceprint, delete the ones you got wrong".
+
+    Each voiceprint is a verbatim copy of some transcript's file-level embedding
+    (that's how enrollment works), so we recover where it came from by cosine-
+    matching it back against every transcript. One dict per voiceprint:
+      {index, hash, source_stem, label, snippet, segment, has_audio}
+    source_stem/label/snippet/segment are None when the origin can't be found —
+    its transcript was deleted, or reprocessed into fresh embeddings — in which
+    case the sample can still be deleted, just not played. Returns None if there
+    is no such person."""
+    if profiles is None:
+        profiles = prof.load_profiles(config["speakers_file"])
+    vecs = profiles.get(name)
+    if vecs is None:
+        return None
+
+    transcripts = []
+    for jf in sorted(dirs["output"].glob("*.json")):
+        try:
+            transcripts.append((jf.stem, json.loads(jf.read_text())))
+        except Exception:
+            continue  # a corrupt/half-written JSON just can't be an origin
+
+    out = []
+    for i, vec in enumerate(vecs):
+        info = {"source_stem": None, "label": None, "snippet": None,
+                "segment": None, "has_audio": False}
+        best, score = _find_origin(vec, transcripts)
+        if best and score >= ORIGIN_MATCH:
+            stem, data, label = best
+            seg = sample_segment_for(data.get("segments", []), label)
+            info.update(
+                source_stem=stem, label=label,
+                snippet=seg["text"] if seg else None,
+                segment={"start": seg["start"], "end": seg["end"]} if seg else None,
+                has_audio=source_audio_path(stem, dirs) is not None,
+            )
+        out.append({"index": i, "hash": _vec_hash(vec), **info})
+    return out
+
+
+def delete_sample(config, dirs, name, index, expected_hash=None):
+    """Delete ONE of a person's voiceprints by list index, then relabel every
+    transcript. If it was their last voiceprint the person is removed entirely
+    (an empty profile matches nothing). `expected_hash` (from person_samples)
+    guards against a stale page deleting the wrong sample after indices shifted."""
+    profiles = prof.load_profiles(config["speakers_file"])
+    vecs = profiles.get(name)
+    if vecs is None:
+        return {"ok": False, "error": "no such person"}
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(vecs):
+        return {"ok": False, "error": "no such voiceprint"}
+    if expected_hash and _vec_hash(vecs[index]) != expected_hash:
+        return {"ok": False, "error": "voiceprint changed — reload and retry"}
+
+    vecs.pop(index)
+    removed_person = not vecs
+    if removed_person:
+        prof.delete_person(profiles, name)
+    prof.save_profiles(config["speakers_file"], profiles)
+    scanned, _ = relabel_all(config, dirs, profiles)
+    return {"ok": True, "name": name, "index": index,
+            "removed_person": removed_person, "remaining": len(vecs),
+            "scanned": scanned}
 
 
 # ---------------------------------------------------------------- delete / retention

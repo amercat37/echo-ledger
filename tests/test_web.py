@@ -66,6 +66,26 @@ def test_people_rename_and_delete(client):
     assert client.post("/api/people/delete", json={"name": "Al"}).get_json()["ok"]
 
 
+def test_people_samples_endpoint(client, seed, dirs):
+    (dirs["done"] / "meeting.mp3").write_bytes(b"AUDIO")   # so has_audio is True
+    body = client.get("/api/people/samples?name=Allen").get_json()
+    assert body["name"] == "Allen" and len(body["samples"]) == 1
+    s = body["samples"][0]
+    assert s["source_stem"] == "m" and s["has_audio"] is True and s["hash"]
+
+
+def test_people_samples_unknown_person_404(client):
+    assert client.get("/api/people/samples?name=Nobody").status_code == 404
+
+
+def test_people_sample_delete_removes_person_when_last(client, seed):
+    r = client.post("/api/people/sample/delete",
+                    json={"name": "Allen", "index": 0}).get_json()
+    assert r["ok"] and r["removed_person"] is True
+    names = [p["name"] for p in client.get("/api/people").get_json()["people"]]
+    assert "Allen" not in names and "Sharon" in names
+
+
 def test_transcript_speakers_endpoint(client, seed):
     body = client.get(f"/api/transcript/{seed}").get_json()
     assert body["stem"] == "m"

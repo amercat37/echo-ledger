@@ -353,6 +353,31 @@ def api_people_delete():
     return jsonify(result)
 
 
+@app.route("/api/people/samples")
+def api_people_samples():
+    """One person's individual voiceprints, each with where it came from (source
+    recording + snippet + ▶ segment) so the People page can see, hear, and prune
+    them. 404 if the person isn't enrolled."""
+    name = request.args.get("name", "")
+    samples = engine.person_samples(CONFIG, DIRS, name)
+    if samples is None:
+        abort(404)
+    return jsonify({"name": name, "samples": samples})
+
+
+@app.route("/api/people/sample/delete", methods=["POST"])
+def api_people_sample_delete():
+    """Delete ONE voiceprint from a person. Body: {name, index, hash?}. The hash
+    (from /api/people/samples) guards against deleting the wrong one from a stale
+    page. Removes the person entirely if it was their last voiceprint."""
+    p = request.get_json(force=True)
+    result = engine.delete_sample(CONFIG, DIRS, p.get("name", ""),
+                                  p.get("index"), p.get("hash"))
+    log.info("people.sample.delete name=%r index=%r: %s",
+             p.get("name"), p.get("index"), result)
+    return jsonify(result)
+
+
 @app.route("/api/delete", methods=["POST"])
 def api_delete():
     """Delete a transcript and its source audio. Body: {stem, audio_only?}.

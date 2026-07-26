@@ -4,31 +4,60 @@
 
 <p class="muted" style="margin-top:0;">
   Everyone Echo Ledger has learned to recognize. Rename someone (updates every
-  transcript) or delete a voiceprint you got wrong — no need to touch any files.
+  transcript) or delete them entirely. Expand <b>Voiceprints</b> to see, hear, and
+  delete the individual voice samples that make up a person — prune a bad one (say a
+  crosstalk clip) without losing the rest. No need to touch any files.
 </p>
 
 <div id="list" class="card"><div class="empty">Loading…</div></div>
 <div id="notice" class="muted" style="margin-top:12px; min-height:20px;"></div>
 
 <script>
-const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const notice = document.querySelector('#notice');
 
 function row(p) {
   const n = esc(p.name);
-  return `<div class="row" data-name="${n}">
-    <div style="flex:1; min-width:0;">
-      <span class="view-name name">${n}</span>
-      <input class="edit-name" value="${n}" style="display:none; padding:7px 10px;
-        border:1px solid var(--line); border-radius:8px; background:var(--bg);
-        color:var(--ink); font-size:15px; font-weight:600; width:200px;">
-      <span class="muted" style="font-size:13px; margin-left:8px;">${p.samples} voiceprint${p.samples===1?'':'s'}</span>
+  return `<div class="person" data-name="${n}">
+    <div class="row">
+      <div style="flex:1; min-width:0;">
+        <span class="view-name name">${n}</span>
+        <input class="edit-name" value="${n}" style="display:none; padding:7px 10px;
+          border:1px solid var(--line); border-radius:8px; background:var(--bg);
+          color:var(--ink); font-size:15px; font-weight:600; width:200px;">
+        <span class="muted count" style="font-size:13px; margin-left:8px;">${p.samples} voiceprint${p.samples===1?'':'s'}</span>
+      </div>
+      <span class="spacer" style="margin-left:auto;"></span>
+      <button class="btn sm ghost act-expand">Voiceprints</button>
+      <button class="btn sm ghost act-rename">Rename</button>
+      <button class="btn sm act-save" style="display:none;">Save</button>
+      <button class="btn sm ghost act-cancel" style="display:none;">Cancel</button>
+      <button class="btn sm ghost act-delete" style="color:var(--err);">Delete</button>
     </div>
-    <span class="spacer" style="margin-left:auto;"></span>
-    <button class="btn sm ghost act-rename">Rename</button>
-    <button class="btn sm act-save" style="display:none;">Save</button>
-    <button class="btn sm ghost act-cancel" style="display:none;">Cancel</button>
-    <button class="btn sm ghost act-delete" style="color:var(--err);">Delete</button>
+    <div class="samples" style="display:none; border-top:1px solid var(--line); background:var(--bg);"></div>
+  </div>`;
+}
+
+function sampleRow(s) {
+  const canPlay = s.segment && s.has_audio;
+  const play = canPlay
+    ? `<button class="btn sm ghost play" data-stem="${esc(s.source_stem)}"
+         data-start="${s.segment.start}" data-end="${s.segment.end}">▶</button>`
+    : `<button class="btn sm ghost" disabled title="source audio unavailable"
+         style="opacity:.35; cursor:default;">▶</button>`;
+  const where = s.source_stem
+    ? `<a class="link" href="/view/${encodeURIComponent(s.source_stem)}">${esc(s.source_stem)}</a>`
+    : `<span class="muted">source no longer available</span>`;
+  const snippet = s.snippet
+    ? esc(s.snippet)
+    : '<em>no speech snippet</em>';
+  return `<div class="row samplerow" data-index="${s.index}" data-hash="${esc(s.hash)}">
+    ${play}
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:13px;">from ${where}</div>
+      <div class="muted" style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">“${snippet}”</div>
+    </div>
+    <button class="btn sm ghost act-sdelete" style="color:var(--err);">Delete</button>
   </div>`;
 }
 
@@ -37,18 +66,23 @@ async function load() {
   const list = document.querySelector('#list');
   if (!people.length) { list.innerHTML = '<div class="empty">No one enrolled yet. Name a voice on the Tag page and they show up here.</div>'; return; }
   list.innerHTML = people.map(row).join('');
-  list.querySelectorAll('.row').forEach(wire);
+  list.querySelectorAll('.person').forEach(wire);
 }
 
 function wire(r) {
   const name = r.dataset.name;
   const view = r.querySelector('.view-name'), edit = r.querySelector('.edit-name');
-  const btnR = r.querySelector('.act-rename'), btnS = r.querySelector('.act-save'),
-        btnC = r.querySelector('.act-cancel'), btnD = r.querySelector('.act-delete');
+  const btnE = r.querySelector('.act-expand'),  btnR = r.querySelector('.act-rename'),
+        btnS = r.querySelector('.act-save'),     btnC = r.querySelector('.act-cancel'),
+        btnD = r.querySelector('.act-delete');
+  const samplesEl = r.querySelector('.samples');
+  let loaded = false;
+
   const mode = editing => {
     view.style.display = editing ? 'none' : '';
     edit.style.display = editing ? '' : 'none';
     btnR.style.display = editing ? 'none' : '';
+    btnE.style.display = editing ? 'none' : '';
     btnD.style.display = editing ? 'none' : '';
     btnS.style.display = editing ? '' : 'none';
     btnC.style.display = editing ? '' : 'none';
@@ -66,12 +100,38 @@ function wire(r) {
     load();
   };
   btnD.onclick = async () => {
-    if (!confirm(`Delete “${name}” and their voiceprints? Their voice will go back to “Speaker N” in every transcript until re-tagged.`)) return;
+    if (!confirm(`Delete “${name}” and all their voiceprints? Their voice will go back to “Speaker N” in every transcript until re-tagged.`)) return;
     notice.textContent = 'Deleting…';
     const j = await post('/api/people/delete', { name });
     notice.textContent = j.ok ? `Deleted “${name}”. Re-labeled ${j.scanned} transcript(s).`
                               : `Delete failed: ${j.error || 'unknown'}`;
     load();
+  };
+
+  btnE.onclick = async () => {
+    const open = samplesEl.style.display !== 'none';
+    if (open) { samplesEl.style.display = 'none'; btnE.textContent = 'Voiceprints'; return; }
+    samplesEl.style.display = ''; btnE.textContent = 'Hide';
+    if (loaded) return;
+    samplesEl.innerHTML = '<div class="empty">Loading…</div>';
+    const { samples } = await (await fetch('/api/people/samples?name=' + encodeURIComponent(name))).json();
+    loaded = true;
+    samplesEl.innerHTML = samples.length ? samples.map(sampleRow).join('')
+                                         : '<div class="empty">No voiceprints.</div>';
+    samplesEl.querySelectorAll('.play').forEach(b => b.onclick = () =>
+      EL.play(b.dataset.stem, parseFloat(b.dataset.start), parseFloat(b.dataset.end), b));
+    samplesEl.querySelectorAll('.samplerow').forEach(sr =>
+      sr.querySelector('.act-sdelete').onclick = async () => {
+        if (!confirm(`Delete this one voiceprint for “${name}”? The rest are kept. If it's the last one, “${name}” is removed.`)) return;
+        notice.textContent = 'Deleting voiceprint…';
+        const j = await post('/api/people/sample/delete',
+          { name, index: parseInt(sr.dataset.index, 10), hash: sr.dataset.hash });
+        if (!j.ok) { notice.textContent = `Delete failed: ${j.error || 'unknown'}`; return; }
+        notice.textContent = j.removed_person
+          ? `Deleted the last voiceprint — “${name}” removed. Re-labeled ${j.scanned} transcript(s).`
+          : `Deleted one voiceprint — ${j.remaining} left for “${name}”. Re-labeled ${j.scanned} transcript(s).`;
+        load();  // counts changed (and the person may be gone) — rebuild the list
+      });
   };
 }
 

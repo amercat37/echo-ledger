@@ -126,6 +126,75 @@ def test_rename_and_delete_person_all(data, config, dirs, write_transcript, prof
     assert "**Al**" not in (dirs["output"] / "m.md").read_text()
 
 
+# ---- per-voiceprint: see / hear / delete -------------------------------------
+
+def test_person_samples_reconstructs_origin(config, dirs, write_transcript, data, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    write_transcript("m", data)                       # SPEAKER_00 == Allen's vector
+    (dirs["done"] / "meeting.mp3").write_bytes(b"AUDIO")
+    samples = engine.person_samples(config, dirs, "Allen")
+    assert len(samples) == 1
+    s = samples[0]
+    assert s["index"] == 0 and s["hash"]
+    assert s["source_stem"] == "m" and s["label"] == "SPEAKER_00"
+    assert s["snippet"] and s["segment"] and s["has_audio"] is True
+
+
+def test_person_samples_origin_lost_when_no_transcript(config, dirs, profiles):
+    # Allen is enrolled but no transcript on disk holds his embedding.
+    prof.save_profiles(config["speakers_file"], profiles)
+    samples = engine.person_samples(config, dirs, "Allen")
+    assert len(samples) == 1
+    s = samples[0]
+    assert s["index"] == 0 and s["hash"]              # still identifiable + deletable
+    assert s["source_stem"] is None and s["has_audio"] is False and s["segment"] is None
+
+
+def test_person_samples_unknown_person_is_none(config, dirs, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    assert engine.person_samples(config, dirs, "Nobody") is None
+
+
+def test_delete_sample_removes_one_and_keeps_rest(config, dirs, write_transcript, data):
+    prof.save_profiles(config["speakers_file"],
+                       {"Allen": [[1.0, 0, 0, 0], [0, 0, 1.0, 0]]})
+    write_transcript("m", data)
+    res = engine.delete_sample(config, dirs, "Allen", 1)
+    assert res["ok"] and res["removed_person"] is False and res["remaining"] == 1
+    assert prof.load_profiles(config["speakers_file"])["Allen"] == [[1.0, 0, 0, 0]]
+
+
+def test_delete_sample_last_removes_person(config, dirs, write_transcript, data, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    write_transcript("m", data)
+    res = engine.delete_sample(config, dirs, "Allen", 0)
+    assert res["ok"] and res["removed_person"] is True and res["remaining"] == 0
+    assert "Allen" not in prof.load_profiles(config["speakers_file"])
+    assert "**Allen**" not in (dirs["output"] / "m.md").read_text()  # relabeled
+
+
+def test_delete_sample_hash_guard_blocks_wrong_target(config, dirs, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    res = engine.delete_sample(config, dirs, "Allen", 0, expected_hash="deadbeef")
+    assert res["ok"] is False and "changed" in res["error"]
+    assert prof.load_profiles(config["speakers_file"])["Allen"] == [[1.0, 0, 0, 0]]  # untouched
+
+
+def test_delete_sample_hash_guard_allows_matching_hash(config, dirs, write_transcript, data, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    write_transcript("m", data)
+    good = engine.person_samples(config, dirs, "Allen")[0]["hash"]
+    res = engine.delete_sample(config, dirs, "Allen", 0, expected_hash=good)
+    assert res["ok"] and res["removed_person"] is True
+
+
+def test_delete_sample_bad_index_and_unknown_person(config, dirs, profiles):
+    prof.save_profiles(config["speakers_file"], profiles)
+    assert engine.delete_sample(config, dirs, "Allen", 9)["ok"] is False
+    assert engine.delete_sample(config, dirs, "Allen", -1)["ok"] is False
+    assert engine.delete_sample(config, dirs, "Ghost", 0)["error"] == "no such person"
+
+
 # ---- delete + retention ------------------------------------------------------
 
 def test_source_audio_path_prefers_recorded_then_falls_back(dirs, write_transcript, data):

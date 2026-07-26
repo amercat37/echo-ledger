@@ -38,7 +38,7 @@ that they're reused, so subsequent starts are fast.
 
 ## Using the web UI
 
-Two pages:
+Three pages:
 
 - **Transcribe** — drag audio onto the drop zone (or click to choose). Files
   **auto-start** transcribing; there's no per-file button because the machine
@@ -49,6 +49,13 @@ Two pages:
   shows a short speech snippet per unknown speaker with a name box. Name one and
   save: the voiceprint is stored and **every past transcript is re-labeled**
   automatically. No re-transcription — labeling is instant.
+- **People** — everyone the system has learned. **Rename** someone (updates every
+  transcript) or **delete** them entirely. Expand **Voiceprints** to see the
+  individual voice samples that make up a person: each shows which recording it came
+  from with a short snippet, a ▶ to **hear** that exact clip, and a **Delete** to
+  prune just that one sample (e.g. a crosstalk clip dragging recognition down) while
+  keeping the rest. Deleting a person's last voiceprint removes the person. Every
+  edit re-labels all transcripts automatically.
 
 Open a transcript (**View**) and you also get **Copy** (transcript markdown to the
 clipboard) and **Reprocess**. Reprocess re-runs transcription on the *original audio*
@@ -180,7 +187,7 @@ real `speakers.json` or transcripts.
 
 ```bash
 uv pip install -r requirements-dev.txt   # or: pip install -r requirements-dev.txt
-pytest                                    # ~0.2s, 51 tests
+pytest                                    # ~0.3s, 62 tests
 ```
 
 They cover matching, the snippet/▶-segment alignment, per-transcript overrides,
