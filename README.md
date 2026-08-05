@@ -193,9 +193,9 @@ extra vars can shadow the container paths the image sets.
 
 ## Privacy note
 
-`speakers.json` holds **biometric voiceprints** and raw audio is personal data.
-Both are gitignored and never baked into the Docker image. Audio of any kind is
-excluded from version control as a hard rule.
+`speakers.json` holds **biometric voiceprints**, and raw audio is personal data. Both are gitignored and never baked into the Docker image. Audio of any kind is excluded from version control as a hard rule.
+
+Only process recordings that you are authorized to use. Follow applicable recording-consent laws, privacy requirements, biometric-data rules, and workplace policies.
 
 ---
 
@@ -253,16 +253,6 @@ Echo Ledger is a companion to my **memory-vault** project — the transcripts it
 produces are meant to be filed into that Obsidian vault by hand (Livesync stays
 the vault's only writer, so nothing here touches it directly).
 
-It's also an experiment. I wanted to see whether Claude (via Claude Code) could
-take an entire project from an idea to working, tested, production-ready software
-**on its own — without me writing a single line of code.** We spent roughly two
-hours talking through the design together: I made the product calls (Docker-only,
-one serial worker, the speaker-ID model, the privacy rules, how tagging should
-feel), answered questions, and course-corrected. Claude did all the rest — the
-engine, the Flask app, the diarization/matching pipeline, the Docker setup, every
-feature you see above (speaker ID, re-tagging, reprocess, the roster solver,
-per-voiceprint management, dismiss), the 77-test suite, and this documentation.
+Echo Ledger was also an experiment in agent-assisted software development. I defined the product requirements, architecture, privacy rules, speaker-identification behavior, Docker-only deployment model, and user experience. I then directed and iterated on the implementation with Claude Code, reviewing the resulting behavior and course-correcting throughout development.
 
-Every line of code in this repo was written by Claude. I never edited one.
-
-*— Allen*
+Claude Code generated the implementation, documentation, and automated test suite under that direction. The project demonstrates how clearly defined requirements, architectural judgment, validation, and iterative feedback can turn an initial idea into working software.
