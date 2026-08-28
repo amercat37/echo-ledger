@@ -1,4 +1,8 @@
 .env
+# ...and any copy of it. `.env` alone does not cover `.env.bak`, `.env.local`
+# and friends, and such a file carries a real HF_TOKEN. (`env.sample` is the
+# committed template and is unaffected by this pattern.)
+.env.*
 .venv/
 output/
 input/
@@ -23,3 +27,7 @@ scratch_*
 *.mp4
 *.aac
 .pytest_cache/
+
+# Local Compose override: per-machine ports and volume paths. Compose reads it
+# automatically if present. Machine-specific by nature — never commit it.
+docker-compose.override.yml
